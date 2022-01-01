@@ -10,11 +10,15 @@ TEST_REPS=REPS[4:]
 MAX_TRAIN_REPS=len(TRAIN_REPS)
 MAX_TEST_REPS=len(TEST_REPS)
 MAX_REPS=len(REPS)
+BLOCK_SIZE=1    # 2 might be too large of a batch size
 TASK_DIST=[17,23]
 MAX_TASKS=sum(TASK_DIST)
 # In ms.
 TOTAL_WINDOW_SIZE=150
 WINDOW_MS=15
+WINDOW_STRIDE=10
+WINDOW_OUTPUT_DIM=TOTAL_WINDOW_SIZE//WINDOW_STRIDE
+assert TOTAL_WINDOW_SIZE%WINDOW_OUTPUT_DIM==0
 # skip by 2 to get 1 frame per ms
 Hz=2000
 assert TOTAL_WINDOW_SIZE % WINDOW_MS == 0, "Window ms does not fit into total window length"
