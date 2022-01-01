@@ -37,7 +37,7 @@ class DB23(data.Dataset):
         self.NEW_PEOPLE=new_people
         self.NEW_TASKS=new_tasks
         self.MAX_PEOPLE_TRAIN=MAX_PEOPLE-new_people
-        self.MAX_TASK_TRAIN=MAX_TASKS-self.NEW_TASKS
+        self.MAX_TASKS_TRAIN=MAX_TASKS-self.NEW_TASKS
 
         # DO NOT take last *new_people*
         self.people_rand_d2=torch.randperm(MAX_PEOPLE_D2, device=self.device)
@@ -45,16 +45,32 @@ class DB23(data.Dataset):
         # Take by blocks of *2*
         self.rep_rand_train=torchize(TRAIN_REPS)[torch.randperm(MAX_TRAIN_REPS)]
         self.rep_rand_test=torchize(TEST_REPS)[torch.randperm(MAX_TEST_REPS)]
+        self.task_rand=torch.randint(low=1, high=MAX_TASKS, size=(MAX_TASKS,), device=self.device)
 
         self.path="/home/breezy/ULM/prosthetics/db23/"
         #self.path="../"
 
     def __len__(self):
         if self.train:
-            length=self.MAX_PEOPLE_TRAIN*(MAX_TASKS-self.NEW_TASKS)*MAX_TRAIN_REPS
+            return self.MAX_PEOPLE_TRAIN*(MAX_TRAIN_REPS//BLOCK_SIZE)
         else:
-            length=self.MAX_PEOPLE_TRAIN*(MAX_TASKS-self.NEW_TASKS)*MAX_TEST_REPS+(MAX_PEOPLE)*MAX_TASKS*MAX_REPS
-        return length * AMT_WINDOWS # amt windows per task in 150 ms total window
+            return MAX_PEOPLE*(MAX_TEST_REPS//BLOCK_SIZE)
+
+    def set_train(self):
+        self.train=True
+
+    def set_test(self):
+        self.train=False
+
+    def size(self): # datapoints
+        if self.train:
+            #print(self.MAX_PEOPLE_TRAIN,self.MAX_TASKS_TRAIN,2,self.MAX_PEOPLE_TRAIN*self.MAX_TASKS_TRAIN*2)
+            dims=(self.MAX_PEOPLE_TRAIN,self.MAX_TASKS_TRAIN,MAX_TRAIN_REPS,WINDOW_STRIDE)
+            return np.prod(dims), dims
+        else:
+            #print(MAX_PEOPLE,MAX_TASKS,MAX_PEOPLE*MAX_TASKS)
+            dims=(MAX_PEOPLE,MAX_TASKS,MAX_TEST_REPS,WINDOW_STRIDE)
+            return np.prod(dims), dims
 
     def load_subject(self, subject):
         global MAX_PEOPLE_D2
@@ -118,12 +134,13 @@ class DB23(data.Dataset):
             acc_=acc[mask][self.time_mask] * 16
             glove_=glove[mask][self.time_mask] * 16 # / 2**3
 
-        # filter
-        emg_=self.filter(emg_, (20, 40), butterworth_order=4,btype="bandpass") # bandpass filter
+        # filter - 20 Hz to 400 Hz
+        emg_=self.filter(emg_, (20, 400), butterworth_order=4,btype="bandpass") # bandpass filter
 
         # take out outliers
         iqr_glove=np.subtract(*np.percentile(glove_, [75, 25], axis=0))
         iqr_acc=np.subtract(*np.percentile(acc_, [75, 25], axis=0))
+        # take out anything below the 1 percentile or above 99 percentile
         emg_high,emg_low=np.percentile(acc_, [99, 1], axis=0)
 
         for dim in range(GLOVE_DIM):
@@ -138,7 +155,7 @@ class DB23(data.Dataset):
             emg_.T[dim][(emg_.T[dim]>emg_high[dim])] = emg_high[dim]
             emg_.T[dim][(emg_.T[dim]<emg_low[dim])] = -emg_low[dim]
 
-        acc_=acc_.reshape(AMT_WINDOWS, -1, ACC_DIM).mean(1)
+        #acc_=acc_.reshape(AMT_WINDOWS, -1, ACC_DIM).mean(1) # no mean anymore so we can stride
 
         return emg_, acc_, glove_
 
@@ -173,7 +190,7 @@ class DB23(data.Dataset):
 
                 shape=(MAX_TASKS+1,MAX_REPS,TOTAL_WINDOW_SIZE)
                 EMG=torch.empty(shape+(EMG_DIM,),device=self.device)
-                ACC=torch.empty(shape[:-1]+(AMT_WINDOWS, ACC_DIM,),device=self.device)
+                ACC=torch.empty(shape+(ACC_DIM,),device=self.device)
                 GLOVE=torch.empty(shape+(GLOVE_DIM,),device=self.device)
 
                 for rep in range(1,MAX_REPS+1):
@@ -224,24 +241,72 @@ class DB23(data.Dataset):
         # acc dimension is just a mean
         # glove and emg are images (windowms x respective dim)
 
-        BLOCK_SIZE=2
-        PEOPLE=MAX_PEOPLE_TRAIN if self.train else MAX_PEOPLE
+        PEOPLE=self.MAX_PEOPLE_TRAIN if self.train else MAX_PEOPLE
         TASKS=self.MAX_TASKS_TRAIN if self.train else MAX_TASKS
 
         rep_block = batch_idx // PEOPLE
-        subject = batch_idx % PEOPLE 
-        
+        subject=batch_idx % PEOPLE
+        tasks_mask=self.task_rand[:-self.NEW_TASKS] if self.train else self.task_rand
+        tasks_mask=torch.cat((tasks_mask, torchize([0])))
 
-        return self.load_subject(batch_idx)
+        if subject>MAX_PEOPLE_D2:
+            subject = self.people_rand_d3[subject%MAX_PEOPLE_D2]
+        else:
+            subject = self.people_rand_d2[subject]
+
+        # shape = (41, 6, 15, 10, dim)
+        EMG,ACC,GLOVE=self.load_subject(batch_idx)
+
+        EMG=EMG[tasks_mask, rep_block*BLOCK_SIZE:rep_block*BLOCK_SIZE+2] # get rep_block
+        shape=(BLOCK_SIZE*(TASKS+1), TOTAL_WINDOW_SIZE, EMG_DIM)
+        EMG=EMG.reshape(shape)
+        # stride across 150 ms (moving window of window_ms size)
+        stride=(TOTAL_WINDOW_SIZE*EMG_DIM, WINDOW_STRIDE, EMG_DIM, 1)
+        # for experts only (hehe)
+        EMG=torch.as_strided(EMG, (shape[0], WINDOW_OUTPUT_DIM, WINDOW_MS, EMG_DIM), stride)
+        EMG=EMG.reshape(-1, WINDOW_MS, EMG_DIM)
+
+        GLOVE=GLOVE[tasks_mask, rep_block*BLOCK_SIZE:rep_block*BLOCK_SIZE+2] # get rep_block
+        shape=(BLOCK_SIZE*(TASKS+1), TOTAL_WINDOW_SIZE, GLOVE_DIM)
+        GLOVE=GLOVE.reshape(shape)
+        # stride across 150 ms (moving window of window_ms size)
+        stride=(TOTAL_WINDOW_SIZE*GLOVE_DIM, WINDOW_STRIDE, GLOVE_DIM, 1)
+        GLOVE=torch.as_strided(GLOVE, (shape[0], WINDOW_OUTPUT_DIM, WINDOW_MS, GLOVE_DIM), stride)
+        GLOVE=GLOVE.reshape(-1, WINDOW_MS, GLOVE_DIM)
+
+        ACC=ACC[tasks_mask, rep_block*BLOCK_SIZE:rep_block*BLOCK_SIZE+2] # get rep_block
+        shape=(BLOCK_SIZE*(TASKS+1), TOTAL_WINDOW_SIZE, ACC_DIM)
+        ACC=ACC.reshape(shape)
+        # stride across 150 ms (moving window of window_ms size)
+        stride=(TOTAL_WINDOW_SIZE*ACC_DIM, WINDOW_STRIDE, ACC_DIM, 1)
+        ACC=torch.as_strided(ACC, (shape[0], WINDOW_OUTPUT_DIM, WINDOW_MS, ACC_DIM), stride)
+        ACC=ACC.reshape(-1, WINDOW_MS, ACC_DIM)
+
+        #now average over the window_ms
+        ACC=ACC.mean(1) # (-1, ACC_DIM)
+
+        print(EMG.shape,ACC.shape)
 
 if __name__=="__main__":
-    t=time.time()
     db=DB23()
-    db.load_dataset()
-    print(time.time()-t)
 
     #t=time.time()
+    #db.load_dataset()
+    #print(time.time()-t)
+
+    t=time.time()
     #for i in PEOPLE_D3+PEOPLE_D2:
     #    EMG,ACC,GLOVE=db[i]
     #    print(EMG.shape, i)
+    #db[0]
     #print(time.time()-t)
+    for train in [False, True]:
+        if train:
+            db.set_train()
+        else:
+            db.set_test()
+        print("TRAIN:" if train else "TEST:")
+        size,size_dims=db.size()
+        print("\tDatapoints: dim (%s), size %s"%(size,size_dims))
+        batch=len(db)
+        print("\tBatch amts: %s"%(batch))
