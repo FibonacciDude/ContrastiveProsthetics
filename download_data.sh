@@ -1,4 +1,4 @@
-#/bin/bash
+#!/bin/bash
 # This has to be done with sudo command
 
 wget -O data_db23.zip http://datadryad.org/api/v2/datasets/doi%253A10.5061%252Fdryad.1k84r/download
@@ -13,18 +13,25 @@ for i in {1..40}
 do
     mkdir db2/s$i
     mv DB2_s$i.zip db2/s$i/DB2_s$i.zip
-
     cd db2/s$i
+    
+    # create pt files
+    touch emg.pt acc.pt glove.pt
+    chmod 777 emg.pt acc.pt glove.pt
     unzip *.zip
     cd ../..
 done
 
+echo "amputees"
 for i in {1..11}
 do
     mkdir db3/s$i
     mv DB3_s$i.zip db3/s$i/DB3_s$i.zip
-
     cd db3/s$i
+
+    # create pt files
+    touch emg.pt acc.pt glove.pt
+    chmod 777 emg.pt acc.pt glove.pt
     unzip *.zip
     cd ../..
 done
