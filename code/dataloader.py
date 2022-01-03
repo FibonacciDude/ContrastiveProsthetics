@@ -48,17 +48,19 @@ class DB23(data.Dataset):
         _rand_perm_test=torch.randperm(MAX_TEST_REPS, device=self.device)
         _rand_perm_train=torch.randperm(MAX_TRAIN_REPS, device=self.device)
 
-        self.rep_rand_train=torchize(TRAIN_REPS, device=self.device)[_rand_perm_train[:-1]]
-        self.rep_rand_val=torchize(TRAIN_REPS, device=self.device)[_rand_perm_train[-1:]]
-        self.rep_rand_test=torchize(TEST_REPS, device=self.device)[_rand_perm_test]
-        self.task_rand=torch.randint(low=1, high=MAX_TASKS, size=(MAX_TASKS,), device=self.device)
+        self.rep_rand_train=torchize(TRAIN_REPS, device=self.device)[_rand_perm_train[:-1]]-1
+        self.rep_rand_val=torchize(TRAIN_REPS, device=self.device)[_rand_perm_train[-1:]]-1
+        self.rep_rand_test=torchize(TEST_REPS, device=self.device)[_rand_perm_test]-1
+        self.task_rand=torch.randperm(MAX_TASKS, device=self.device)
 
         self.path="/home/breezy/ULM/prosthetics/db23/"
         #self.path="../"
 
     def __len__(self):
         if self.train:
-            return self.MAX_PEOPLE_TRAIN*(MAX_TRAIN_REPS//BLOCK_SIZE)
+            return self.MAX_PEOPLE_TRAIN*((MAX_TRAIN_REPS-1)//BLOCK_SIZE)
+        elif self.val:
+            return self.MAX_PEOPLE_TRAIN*1
         else:
             return MAX_PEOPLE*(MAX_TEST_REPS//BLOCK_SIZE)
 
@@ -76,17 +78,18 @@ class DB23(data.Dataset):
 
     def size(self): # datapoints
         if self.train:
-            #print(self.MAX_PEOPLE_TRAIN,self.MAX_TASKS_TRAIN,2,self.MAX_PEOPLE_TRAIN*self.MAX_TASKS_TRAIN*2)
-            dims=(self.MAX_PEOPLE_TRAIN,self.MAX_TASKS_TRAIN,MAX_TRAIN_REPS-1,WINDOW_STRIDE) # one for validation
+            dims=(self.MAX_PEOPLE_TRAIN,self.MAX_TASKS_TRAIN,MAX_TRAIN_REPS-1,WINDOW_STRIDE)
+            return np.prod(dims), dims
+        elif self.val:
+            dims=(self.MAX_PEOPLE_TRAIN,self.MAX_TASKS_TRAIN,1,WINDOW_STRIDE)
             return np.prod(dims), dims
         else:
-            #print(MAX_PEOPLE,MAX_TASKS,MAX_PEOPLE*MAX_TASKS)
             dims=(MAX_PEOPLE,MAX_TASKS,MAX_TEST_REPS,WINDOW_STRIDE)
             return np.prod(dims), dims
 
     def load_subject(self, subject):
         global MAX_PEOPLE_D2
-        dbnum="3" if subject >= MAX_PEOPLE_D2 else "2"
+        dbnum="3" if (subject >= MAX_PEOPLE_D2) else "2"
         if dbnum=="3":
             subject %= MAX_PEOPLE_D2
         p_dir=str(subject+1)
@@ -102,7 +105,7 @@ class DB23(data.Dataset):
     def save_subject(self, subject, tensors):
         EMG, ACC, GLOVE = tensors
         global MAX_PEOPLE_D2
-        dbnum="3" if subject >= MAX_PEOPLE_D2 else "2"
+        dbnum="3" if (subject >= MAX_PEOPLE_D2) else "2"
         if dbnum=="3":
             subject %= MAX_PEOPLE_D2
         p_dir=str(subject+1)
@@ -151,7 +154,6 @@ class DB23(data.Dataset):
 
         # filter - 20 Hz to 400 Hz
         emg_=self.filter(emg_, (20, 400), butterworth_order=4,btype="bandpass") # bandpass filter
-
         # take out outliers
         iqr_glove=np.subtract(*np.percentile(glove_, [75, 25], axis=0))
         iqr_acc=np.subtract(*np.percentile(acc_, [75, 25], axis=0))
@@ -280,18 +282,18 @@ class DB23(data.Dataset):
         # glove and emg are images (windowms x respective dim)
 
         rep_block = batch_idx // self.PEOPLE
-        subject=batch_idx % self.PEOPLE
+        subject = batch_idx % self.PEOPLE
 
         block_mask=self.block_mask[rep_block*BLOCK_SIZE:(rep_block+1)*BLOCK_SIZE]
         tasks_mask=self.tasks_mask
 
-        if subject>MAX_PEOPLE_D2:
-            subject = self.people_rand_d3[subject%MAX_PEOPLE_D2]
+        if subject >= MAX_PEOPLE_D2:
+            subject = self.people_rand_d3[subject%MAX_PEOPLE_D2].item()
         else:
-            subject = self.people_rand_d2[subject]
+            subject = self.people_rand_d2[subject].item()
 
         # shape = (41, 6, 15, 10, dim)
-        EMG,ACC,GLOVE=self.load_subject(batch_idx)
+        EMG,ACC,GLOVE=self.load_subject(subject)
 
         EMG=EMG[tasks_mask, block_mask]
         shape=(BLOCK_SIZE*(self.TASKS), TOTAL_WINDOW_SIZE, EMG_DIM)
@@ -324,7 +326,7 @@ class DB23(data.Dataset):
         return (EMG,GLOVE,ACC)
 
 if __name__=="__main__":
-    db=DB23()
+    db=DB23(new_people=3,new_tasks=4)
 
     #t=time.time()
     #db.load_dataset()
@@ -336,7 +338,6 @@ if __name__=="__main__":
     #    print(EMG.shape, i)
     #db[0]
     #print(time.time()-t)
-    """
     for train in [False, True]:
         if train:
             db.set_train()
@@ -347,4 +348,3 @@ if __name__=="__main__":
         print("\tDatapoints: dim (%s), size %s"%(size,size_dims))
         batch=len(db)
         print("\tBatch amts: %s"%(batch))
-    """
