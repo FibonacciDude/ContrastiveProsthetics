@@ -8,12 +8,14 @@ from constants import *
 import tqdm 
 from models import GLOVENet, EMGNet
 
+torch.manual_seed(42)
+
 # modeled after https://github.com/openai/CLIP/blob/main/clip/model.py
 class Model(nn.Module):
-    def __init__(self, d_e, train=True, device="cuda"):
+    def __init__(self, d_e, train_model=True, device="cuda"):
         super(Model,self).__init__()
 
-        self.train_model = train
+        self.train_model = train_model
         self.d_e = d_e
         self.device = torch.device(device)
 
@@ -94,17 +96,23 @@ class Model(nn.Module):
 
     def correct_glove(self, logits, vote=True):
         N,tasks,tasks=logits.shape
+
         argmax_glove=self.predict_glove_from_emg(logits)
+        labels_=self.get_labels(N,tasks)
+        correct = (argmax_glove.reshape(-1)==labels_).sum().cpu().item()
 
         if not vote:
-            labels=self.get_labels(N,tasks)
-            return (argmax_glove.reshape(-1)==labels).sum().cpu().item()
+            return correct
+        else:
+            # (tasks), mean logits over the entire thing
+            argmax_glove=self.predict_glove_from_emg(logits.mean(0).unsqueeze(0)).flatten()
+            labels=self.get_labels(1,tasks).flatten()
+            correct_maj = (argmax_glove==labels).sum().cpu().item()
 
-        argmax_glove=argmax_glove.mode(0)    # voting across 150 ms
-        labels=self.get_labels(1,tasks).reshape(-1)
-        return (argmax_glove==labels).sum().cpu().item()
+        return correct_maj, correct
 
-
+    # TODO: copy from above
+    """
     def correct_emg(self, logits,vote=True):
         N,tasks,tasks=logits.shape
         argmax_emg=self.predict_emg_from_glove(logits)
@@ -116,6 +124,7 @@ class Model(nn.Module):
         argmax_emg=argmax_emg.mode(0)    # voting across 150 ms
         labels=self.get_labels(1,tasks).reshape(-1)
         return (argmax_emg==labels).sum().cpu().item()
+    """
 
     def get_labels(self, N, tasks):
         return torch.stack([torch.arange(tasks,dtype=torch.long,device=self.device)]*N).reshape(N*tasks)
@@ -136,29 +145,47 @@ class Model(nn.Module):
     def l2(self):
         return self.emg_net.l2() + self.glove_net.l2()
 
-def test(mode, dataset):
+def test(model, dataset):
     dataset.set_test()
     model.set_test()
     model.eval()
 
-    val_loader=data.DataLoader(dataset=dataset,batch_size=1,shuffle=True,num_workers=NUM_WORKERS)
+    test_loader=data.DataLoader(dataset=dataset,batch_size=1,shuffle=True,num_workers=NUM_WORKERS)
     total_tasks=dataset.TASKS
     total_loss = []
-    total_correct = []
+    total_correct = []  # in each 15 ms
+    total_correct_voting = [] # in all
     total=0
 
-    for (EMG,GLOVE,ACC) in val_loader:
+    logits_labels = []   # rep_block, subject, window block
+
+    for i, (EMG,GLOVE,ACC) in enumerate(test_loader):
+        cnt=total//EMG.shape[0]
         EMG,ACC,GLOVE=EMG.squeeze(0),ACC.squeeze(0),GLOVE.squeeze(0)
         logits = model.forward(EMG,ACC,GLOVE,total_tasks,total_tasks)
+
+        # take mean for all 15 ms windows
+        logits_save = logits.mean(0).detach().cpu().numpy()
+        np.save('../data/logits_%d.npy' % i, logits_save)
+
+        logits_labels.append(dataset.get_idx_(i))
+
         loss=model.loss(logits)
         total_loss.append(loss.item())
-        correct=model.correct_glove(logits)
+
+        correct_maj,correct=model.correct_glove(logits)
+
         total_correct.append(correct)
+        total_correct_voting.append(correct_maj)
         total+=EMG.shape[0]
 
     total_loss=np.array(total_loss)
-    model.set_train()
-    return total_loss.mean(), sum(total_correct)/(total)
+    logits_labels=np.array(logits_labels)
+    np.save('../data/logits_labels.npy', logits_labels)
+
+    print("Testing finished, logits saved, max %d"%(len(test_loader)-1))
+
+    return total_loss.mean(), sum(total_correct)/total, sum(total_correct_voting)/total
 
 
 def validate(model, dataset):
@@ -170,6 +197,7 @@ def validate(model, dataset):
     total_tasks=dataset.TASKS
     total_loss = []
     total_correct = []
+    total_correct_maj = []
     total=0
 
     for (EMG,GLOVE,ACC) in val_loader:
@@ -177,18 +205,19 @@ def validate(model, dataset):
         logits = model.forward(EMG,ACC,GLOVE,total_tasks,total_tasks)
         loss=model.loss(logits)
         total_loss.append(loss.item())
-        correct=model.correct_glove(logits)
+        correct_maj, correct=model.correct_glove(logits)
+        total_correct_maj.append(correct_maj)
         total_correct.append(correct)
         total+=EMG.shape[0]
 
     total_loss=np.array(total_loss)
     model.set_train()
-    return total_loss.mean(), sum(total_correct)/(total)
+    return total_loss.mean(), sum(total_correct)/total, sum(total_correct_maj)/total
 
 def train_loop(dataset, train_loader, params, checkpoint=False,checkpoint_dir="../checkpoints/model", annealing=False,load=None):
 
     # crossvalidation parameters
-    model = Model(d_e=params['d_e'], train=True)
+    model = Model(d_e=params['d_e'], train_model=True)
     if load is not None:
         print("Loading model")
         model.load_state_dict(torch.load(checkpoint_dir+"%d.pth"%load))
@@ -216,22 +245,22 @@ def train_loop(dataset, train_loader, params, checkpoint=False,checkpoint_dir=".
             loss=model.forward(EMG,ACC,GLOVE,total_tasks,total_tasks)+model.l2()*params['l2']
             optimizer.zero_grad()
             loss.backward()
-            loss_train.append(loss.item())
+            loss_train.append((loss-model.l2()*params['l2']).item())
             optimizer.step()
 
         scheduler.step()
-        loss_val,acc=validate(model, dataset)
+        loss_val,acc,acc_maj=validate(model, dataset)
         loss_train=np.array(loss_train).mean()
-        print("Current epoch %d, train_loss: %.4f, val loss: %.4f, acc: %.4f" % (e, loss_train, loss_val, acc))
+        print("Current epoch %d, train_loss: %.4f, val loss: %.4f, acc: %.6f, acc_maj: %.4f" % (e, loss_train, loss_val, acc, acc_maj))
 
-        final_val_acc=(loss_val,acc)
-        val_losses[e]=acc
+        final_val_acc=(loss_val,acc,acc_maj)
+        val_losses[e]=acc_maj   # TODO: acc_maj >= acc?
 
         if checkpoint and acc >= max(list(val_losses.values())):
             torch.save(model.state_dict(), checkpoint_dir+"%d.pt"%counter)
             counter+=1
 
-    return final_val_acc
+    return final_val_acc, model
 
 def main():
     # Do not make new object for train=False just change (randomization would change)
@@ -246,9 +275,9 @@ def main():
     #$lrs=[0.003981071705534973]
     #regs=[0.00031622776601683794]
 
-    #"""
-    lrs = np.logspace(-5,-1,num=10)
-    regs = np.logspace(-7,-4.3,num=4)
+    """
+    lrs = np.logspace(-3,-2,num=5)
+    regs = np.logspace(-8,-6,num=4) # -8,-3
     des=[128]
     #des=[128,256]
     print(lrs)
@@ -269,8 +298,8 @@ def main():
                         'l2' : reg
                         }
 
-                loss_t,acc_t=train_loop(dataset23, train_loader, params, checkpoint=True,load=10)
-                cross_val[(d_e, lr, reg)]=(acc_t,loss_t)
+                (loss_t,acc_t,acc_maj),model=train_loop(dataset23, train_loader, params, checkpoint=True,load=10)
+                cross_val[(d_e, lr, reg)]=(acc_maj, acc_t, loss_t) #TODO
 
         print(cross_val)
         print(sorted(list(cross_val.values()),reverse=True))
@@ -278,32 +307,37 @@ def main():
     vals = np.array(list(cross_val.values()))
     keys = np.array(list(cross_val.keys()))
     print(vals.sort())
-    #"""
+    """
 
-    #"""
+    """
 
     #d_e, lr, reg = keys[vals.argmax()]         # fix this, incorrect
     #checkpoint=878
     """
+
     checkpoint=10
     d_e, lr, reg = 128, 0.0012689610031679222, 1e-6
+    # lr: 0.001, reg: 1e-06
     #lr = 1e-3
-    #reg=1e-7
-    lr=1e-3
-    reg=1e-5
+    lr = 5e-4
+    #reg=1e-6
+    reg = 1e-3
 
     print("Final train")
     params = {
             'd_e' : d_e,
-            'epochs' : 20_000,
-            'gamma' : 1,
+            'epochs' : 3,
             'lr' : lr,
             'step_size' : 10,
             'gamma' : 1,
             'l2' : reg
             }
-    loss,acc=train_loop(dataset23, train_loader, params, checkpoint=True,annealing=True,load=checkpoint)
-    """
+    final_vals, model=train_loop(dataset23, train_loader, params, checkpoint=True,annealing=True,load=checkpoint)
+    final_stats=test(model, dataset23)
+    print(final_vals)
+    print(final_stats)
+    
+   # """
 
 
 if __name__=="__main__":
