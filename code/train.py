@@ -49,18 +49,27 @@ class Model(nn.Module):
         self.emg_net.T=EMG_T
         self.glove_net.T=GLOVE_T
 
-        emg_features = self.encode_emg(EMG, ACC).reshape((-1,EMG_T,self.d_e))
-        glove_features = self.encode_glove(GLOVE).reshape((-1,GLOVE_T,self.d_e))
+        #emg_features = self.encode_emg(EMG, ACC).reshape((-1,EMG_T,self.d_e))
+        #glove_features = self.encode_glove(GLOVE).reshape((-1,GLOVE_T,self.d_e))
+        emg_features = self.encode_emg(EMG, ACC)
+        #print(emg_features.shape, EMG.shape)
+        emg_features = emg_features.reshape((EMG_T,-1,self.d_e)).permute((1,0,2))
+        #ef = self.encode_emg(EMG, ACC).reshape((-1,EMG_T,self.d_e))
+        #print(ef.flatten()[-3:],emg_features.flatten()[-3:])
+
+        glove_features = self.encode_glove(GLOVE)
+        glove_features = glove_features.reshape((GLOVE_T,-1,self.d_e)).permute((1,0,2))
+        
+
         emg_features = emg_features / emg_features.norm(dim=-1,keepdim=True)
         glove_features = glove_features / glove_features.norm(dim=-1,keepdim=True)
 
         #                        -> N_e x N_g
-        # encoders give input as (TASKS*BLOCK_SIZE*WINDOW_OUTPUT_DIM, d_e) or another N
+        # encoders give input as (TASKS*WINDOW_BLOCK, d_e) or another N
         # we want (-1, TASKS, d_e) and take cross entropy across entire (-1) dim
 
         logit_scale=self.logit_scale.exp().clamp(min=1e-8,max=100)
         logits = torch.matmul(emg_features, glove_features.permute(0,2,1)) # shape = (N,TASKS_e,TASKS_g)
-        N=()
 
         if self.train_model:
             return self.loss(logits * logit_scale)
@@ -83,16 +92,29 @@ class Model(nn.Module):
     def predict_emg_from_glove(self, logits):
         return self.emg_probs(logits).argmax(dim=2) # (N,tasks_g), emg pred for each glove
 
-    def correct_glove(self, logits):
+    def correct_glove(self, logits, vote=True):
         N,tasks,tasks=logits.shape
-        argmax_glove=self.predict_glove_from_emg(logits).reshape(-1)
-        labels=self.get_labels(N,tasks)
+        argmax_glove=self.predict_glove_from_emg(logits)
+
+        if not vote:
+            labels=self.get_labels(N,tasks)
+            return (argmax_glove.reshape(-1)==labels).sum().cpu().item()
+
+        argmax_glove=argmax_glove.mode(0)    # voting across 150 ms
+        labels=self.get_labels(1,tasks).reshape(-1)
         return (argmax_glove==labels).sum().cpu().item()
 
-    def correct_emg(self, logits):
+
+    def correct_emg(self, logits,vote=True):
         N,tasks,tasks=logits.shape
-        argmax_emg=self.predict_emg_from_glove(logits).reshape(-1)
-        labels=self.get_labels(N,tasks)
+        argmax_emg=self.predict_emg_from_glove(logits)
+
+        if not vote:
+            labels=self.get_labels(N,tasks)
+            return (argmax_emg.reshape(-1)==labels).sum().cpu().item()
+
+        argmax_emg=argmax_emg.mode(0)    # voting across 150 ms
+        labels=self.get_labels(1,tasks).reshape(-1)
         return (argmax_emg==labels).sum().cpu().item()
 
     def get_labels(self, N, tasks):
@@ -113,6 +135,31 @@ class Model(nn.Module):
 
     def l2(self):
         return self.emg_net.l2() + self.glove_net.l2()
+
+def test(mode, dataset):
+    dataset.set_test()
+    model.set_test()
+    model.eval()
+
+    val_loader=data.DataLoader(dataset=dataset,batch_size=1,shuffle=True,num_workers=NUM_WORKERS)
+    total_tasks=dataset.TASKS
+    total_loss = []
+    total_correct = []
+    total=0
+
+    for (EMG,GLOVE,ACC) in val_loader:
+        EMG,ACC,GLOVE=EMG.squeeze(0),ACC.squeeze(0),GLOVE.squeeze(0)
+        logits = model.forward(EMG,ACC,GLOVE,total_tasks,total_tasks)
+        loss=model.loss(logits)
+        total_loss.append(loss.item())
+        correct=model.correct_glove(logits)
+        total_correct.append(correct)
+        total+=EMG.shape[0]
+
+    total_loss=np.array(total_loss)
+    model.set_train()
+    return total_loss.mean(), sum(total_correct)/(total)
+
 
 def validate(model, dataset):
     dataset.set_val()
@@ -200,8 +247,8 @@ def main():
     #regs=[0.00031622776601683794]
 
     #"""
-    lrs = np.logspace(-4,-1,num=10)
-    regs = np.logspace(-7,-5,num=3)
+    lrs = np.logspace(-5,-1,num=10)
+    regs = np.logspace(-7,-4.3,num=4)
     des=[128]
     #des=[128,256]
     print(lrs)
@@ -215,14 +262,14 @@ def main():
                 print("d_e: %s, lr: %s, reg: %s"%(str(d_e),str(lr),reg))
                 params = {
                         'd_e' : d_e,
-                        'epochs' : 1, # 6
+                        'epochs' : 3, # 6
                         'lr' : lr,
                         'step_size' : 10,
                         'gamma' : 1,
                         'l2' : reg
                         }
 
-                loss_t,acc_t=train_loop(dataset23, train_loader, params, checkpoint=False)
+                loss_t,acc_t=train_loop(dataset23, train_loader, params, checkpoint=True,load=10)
                 cross_val[(d_e, lr, reg)]=(acc_t,loss_t)
 
         print(cross_val)
@@ -231,6 +278,7 @@ def main():
     vals = np.array(list(cross_val.values()))
     keys = np.array(list(cross_val.keys()))
     print(vals.sort())
+    #"""
 
     #"""
 
@@ -241,6 +289,8 @@ def main():
     d_e, lr, reg = 128, 0.0012689610031679222, 1e-6
     #lr = 1e-3
     #reg=1e-7
+    lr=1e-3
+    reg=1e-5
 
     print("Final train")
     params = {

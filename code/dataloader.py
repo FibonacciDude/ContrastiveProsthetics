@@ -332,6 +332,7 @@ class DB23(data.Dataset):
         ACC=torch.as_strided(ACC, (shape[0], WINDOW_OUTPUT_DIM, WINDOW_MS, ACC_DIM), stride)
         ACC=ACC[:, window_mask]
         # shape (TASKS*BLOCK_SIZE,WINDOW_BLOCK,WINDOW_MS,DIM)
+        # (TASKS*BLOCK_SIZE*WINDOW_BLOCK,WINDOW_MS,DIM)
         ACC=ACC.reshape(-1, WINDOW_MS, ACC_DIM)
         #now average over the window_ms
         ACC=ACC.mean(1) # (-1, ACC_DIM)
