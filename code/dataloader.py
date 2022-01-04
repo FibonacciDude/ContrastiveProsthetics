@@ -280,17 +280,21 @@ class DB23(data.Dataset):
         else:
             return self.rep_rand_test
 
+    def get_idx_(self, idx):
+        mul = self.PEOPLE * MAX_WINDOW_BLOCKS
+        rep_block = idx // mul
+        sub_wind_idx = idx % mul
+        subject = sub_wind_idx // MAX_WINDOW_BLOCKS
+        window_block = sub_wind_idx % MAX_WINDOW_BLOCKS
+        return (rep_block, subject, window_block)
+
     def __getitem__(self, batch_idx):
         # batch_idx -> rep_block x (subject x window_block)
         # return batch of shape (2 (rep) * amtwindows * maxtask) x windowms x respective dim
         # acc dimension is just a mean
         # glove and emg are images (windowms x respective dim)
 
-        mul = self.PEOPLE * MAX_WINDOW_BLOCKS
-        rep_block = batch_idx // mul
-        sub_wind_idx = batch_idx % mul
-        subject = sub_wind_idx // MAX_WINDOW_BLOCKS
-        window_block = sub_wind_idx % MAX_WINDOW_BLOCKS
+        rep_block, subject, window_block = self.get_idx_(batch_idx)
 
         block_mask=self.block_mask[rep_block*BLOCK_SIZE:(rep_block+1)*BLOCK_SIZE]
         window_mask=self.window_rand[window_block*WINDOW_BLOCK:(window_block+1)*WINDOW_BLOCK]
@@ -343,7 +347,7 @@ if __name__=="__main__":
     db=DB23(new_people=3,new_tasks=4)
 
     t=time.time()
-    db.load_dataset()
+    #db.load_dataset()
     print(time.time()-t)
 
     t=time.time()
@@ -352,7 +356,7 @@ if __name__=="__main__":
     #    print(EMG.shape, i)
     #db[0]
     #print(time.time()-t)
-    """
+    #"""
     for train in [False, True]:
         if train:
             db.set_train()
@@ -363,4 +367,4 @@ if __name__=="__main__":
         print("\tDatapoints: dim (%s), size %s"%(size,size_dims))
         batch=len(db)
      #   print("\tBatch amts: %s"%(batch))
-    """
+    #"""
