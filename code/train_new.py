@@ -45,22 +45,17 @@ class Model(nn.Module):
 
     def forward(self, EMG, ACC, GLOVE, EMG_T, GLOVE_T):
 
-        # only for randnet
-        self.emg_net.T=EMG_T
-        self.glove_net.T=GLOVE_T
-
         emg_features = self.encode_emg(EMG, ACC).reshape((-1,EMG_T,self.d_e))
         glove_features = self.encode_glove(GLOVE).reshape((-1,GLOVE_T,self.d_e))
         emg_features = emg_features / emg_features.norm(dim=-1,keepdim=True)
         glove_features = glove_features / glove_features.norm(dim=-1,keepdim=True)
 
         #                        -> N_e x N_g
-        # encoders give input as (TASKS*BLOCK_SIZE*WINDOW_OUTPUT_DIM, d_e) or another N
-        # we want (-1, TASKS, d_e) and take cross entropy across entire (-1) dim
+        # encoders give input as (TASKS*BLOCK_SIZE*WINDOW_BLOCK, d_e) or another N
+        # we want (-1, TASK+1, d_e) and take cross entropy across entire (-1) dim
 
         logit_scale=self.logit_scale.exp().clamp(min=1e-8,max=100)
         logits = torch.matmul(emg_features, glove_features.permute(0,2,1)) # shape = (N,TASKS_e,TASKS_g)
-        N=()
 
         if self.train_model:
             return self.loss(logits * logit_scale)
@@ -83,13 +78,13 @@ class Model(nn.Module):
     def predict_emg_from_glove(self, logits):
         return self.emg_probs(logits).argmax(dim=2) # (N,tasks_g), emg pred for each glove
 
-    def correct_glove(self, logits):
+    def correct_glove(self, logits, votes=True):
         N,tasks,tasks=logits.shape
         argmax_glove=self.predict_glove_from_emg(logits).reshape(-1)
         labels=self.get_labels(N,tasks)
         return (argmax_glove==labels).sum().cpu().item()
 
-    def correct_emg(self, logits):
+    def correct_emg(self, logits, votes=True):
         N,tasks,tasks=logits.shape
         argmax_emg=self.predict_emg_from_glove(logits).reshape(-1)
         labels=self.get_labels(N,tasks)
@@ -138,27 +133,19 @@ def validate(model, dataset):
     model.set_train()
     return total_loss.mean(), sum(total_correct)/(total)
 
-def train_loop(dataset, train_loader, params, checkpoint=False,checkpoint_dir="../checkpoints/model", annealing=False,load=None):
+def train_loop(dataset, train_loader, params, checkpoint=False, checkpoint_dir="../checkpoints/model"):
 
     # crossvalidation parameters
     model = Model(d_e=params['d_e'], train=True)
-    if load is not None:
-        print("Loading model")
-        model.load_state_dict(torch.load(checkpoint_dir+"%d.pth"%load))
-    # little higher for annealing
     optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=0)
-    if annealing:
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=1000, eta_min=0,verbose=True)
-        
-    else:
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=params['step_size'], gamma=params['gamma'])
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=params['patience'], factor=params['gamma'], verbose=True)
     #TODO: Load and save model parameters
 
     # train data
     dataset.set_train()
     total_tasks = dataset.TASKS
 
-    val_losses={}
+    val_losses = {}
     counter=0
 
     print("Training...")
@@ -172,19 +159,20 @@ def train_loop(dataset, train_loader, params, checkpoint=False,checkpoint_dir=".
             loss_train.append(loss.item())
             optimizer.step()
 
-        scheduler.step()
         loss_val,acc=validate(model, dataset)
+        scheduler.step(loss_val)
         loss_train=np.array(loss_train).mean()
         print("Current epoch %d, train_loss: %.4f, val loss: %.4f, acc: %.4f" % (e, loss_train, loss_val, acc))
 
-        final_val_acc=(loss_val,acc)
-        val_losses[e]=acc
+        final_val_acc = (loss_val,acc)
+        val_losses[e]=loss_val
 
-        if checkpoint and acc >= max(list(val_losses.values())):
+        if checkpoint and loss_val < min(val_losses.keys()):
             torch.save(model.state_dict(), checkpoint_dir+"%d.pt"%counter)
             counter+=1
 
     return final_val_acc
+
 
 def main():
     # Do not make new object for train=False just change (randomization would change)
@@ -195,66 +183,34 @@ def main():
     # parameters
 
     
+    lrs = np.logspace(-4,-2,num=6)
+    regs = np.logspace(-5,1,num=5)
     #
-    #$lrs=[0.003981071705534973]
-    #regs=[0.00031622776601683794]
+    lrs=[0.003981071705534973]
+    regs=[0.00031622776601683794]
+    #lrs = [0.00615848211066026]
 
-    #"""
-    lrs = np.logspace(-4,-1,num=10)
-    regs = np.logspace(-7,-5,num=3)
-    des=[128]
-    #des=[128,256]
-    print(lrs)
-    print(regs)
-    print(des)
-    cross_val={}
+    cross_val = {}
+    cp = True # checkpoint
 
-    for d_e in des:
+    for d_e in [128,256]:
         for lr in lrs:
             for reg in regs:
-                print("d_e: %s, lr: %s, reg: %s"%(str(d_e),str(lr),reg))
+                print("Lr: %s, reg: %s"%(str(lr),reg))
                 params = {
-                        'd_e' : d_e,
-                        'epochs' : 1, # 6
+                        'd_e' : 128,
+                        'epochs' : 7,
                         'lr' : lr,
                         'step_size' : 10,
-                        'gamma' : 1,
+                        'gamma' : .1,
+                        'patience' : 2000,
                         'l2' : reg
                         }
 
-                loss_t,acc_t=train_loop(dataset23, train_loader, params, checkpoint=False)
-                cross_val[(d_e, lr, reg)]=(acc_t,loss_t)
+                loss_t,acc_t=train_loop(dataset23, train_loader, params, checkpoint=cp)
+                cross_val[(lr, reg, d_e)] = (loss_t,acc_t)
 
-        print(cross_val)
-        print(sorted(list(cross_val.values()),reverse=True))
-    print(cross_val)
-    vals = np.array(list(cross_val.values()))
-    keys = np.array(list(cross_val.keys()))
-    print(vals.sort())
-
-    #"""
-
-    #d_e, lr, reg = keys[vals.argmax()]         # fix this, incorrect
-    #checkpoint=878
-    """
-    checkpoint=10
-    d_e, lr, reg = 128, 0.0012689610031679222, 1e-6
-    #lr = 1e-3
-    #reg=1e-7
-
-    print("Final train")
-    params = {
-            'd_e' : d_e,
-            'epochs' : 20_000,
-            'gamma' : 1,
-            'lr' : lr,
-            'step_size' : 10,
-            'gamma' : 1,
-            'l2' : reg
-            }
-    loss,acc=train_loop(dataset23, train_loader, params, checkpoint=True,annealing=True,load=checkpoint)
-    """
-
+    print("Results:", cross_val)
 
 if __name__=="__main__":
     main()

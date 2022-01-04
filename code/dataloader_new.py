@@ -52,10 +52,7 @@ class DB23(data.Dataset):
         self.rep_rand_val=torchize(TRAIN_REPS, device=self.device)[_rand_perm_train[-1:]]-1
         self.rep_rand_test=torchize(TEST_REPS, device=self.device)[_rand_perm_test]-1
         self.task_rand=torch.randperm(MAX_TASKS, device=self.device)
-
-        # not rand
-        #self.window_rand=torch.randperm(WINDOW_OUTPUT_DIM, device=self.device)
-        self.window_rand=torch.arange(end=WINDOW_OUTPUT_DIM, device=self.device)
+        self.window_rand=torch.randperm(WINDOW_OUTPUT_DIM, device=self.device)
 
         self.path="/home/breezy/ULM/prosthetics/db23/"
         #self.path="../"
@@ -143,8 +140,7 @@ class DB23(data.Dataset):
         stim_mask, rep_mask=(stim==stimulus), (rep==repetition) #(0 if stimulus==0 else repetition))
         mask=(stim_mask&rep_mask).squeeze()
         if mask.sum() < TOTAL_WINDOW_SIZE*(Hz//1000):
-            print("Smaller size: %s, stimulus %s, repetition %s, %s"%(str(self.person), str(stimulus), str(repetition), str(mask.sum())))
-            # start 100 ms after it says it has started
+            print("Smaller size: %s, stimulus %s, repetition %s"%(str(self.person), str(stimulus), str(repetition)))
             time_mask=np.array([np.arange(0,Hz//1000*WINDOW_MS,Hz//1000,dtype=np.uint8)]*AMT_WINDOWS)
             emg_=emg[mask][time_mask] * 16 # 15 ms window
             acc_=acc[mask][time_mask] * 16
@@ -188,7 +184,7 @@ class DB23(data.Dataset):
         subject -> reps -> stim -> amt windows -> window_ms (1 frame per ms) -> dim (emg,acc,glove)
         """
         PEOPLE=PEOPLE_D2+PEOPLE_D3
-        self.time_mask=np.arange(100,Hz//1000*TOTAL_WINDOW_SIZE+100,Hz//1000,dtype=np.uint8)
+        self.time_mask=np.arange(0,Hz//1000*TOTAL_WINDOW_SIZE,Hz//1000,dtype=np.uint8)
 
         self.emg_stats=RunningStats()
         self.acc_stats=RunningStats()
@@ -331,7 +327,6 @@ class DB23(data.Dataset):
         stride=(TOTAL_WINDOW_SIZE*ACC_DIM, WINDOW_STRIDE, ACC_DIM, 1)
         ACC=torch.as_strided(ACC, (shape[0], WINDOW_OUTPUT_DIM, WINDOW_MS, ACC_DIM), stride)
         ACC=ACC[:, window_mask]
-        # shape (TASKS*BLOCK_SIZE,WINDOW_BLOCK,WINDOW_MS,DIM)
         ACC=ACC.reshape(-1, WINDOW_MS, ACC_DIM)
         #now average over the window_ms
         ACC=ACC.mean(1) # (-1, ACC_DIM)
@@ -341,9 +336,9 @@ class DB23(data.Dataset):
 if __name__=="__main__":
     db=DB23(new_people=3,new_tasks=4)
 
-    t=time.time()
-    db.load_dataset()
-    print(time.time()-t)
+    #t=time.time()
+    #db.load_dataset()
+    #print(time.time()-t)
 
     t=time.time()
     #for i in PEOPLE_D3+PEOPLE_D2:
@@ -351,7 +346,6 @@ if __name__=="__main__":
     #    print(EMG.shape, i)
     #db[0]
     #print(time.time()-t)
-    """
     for train in [False, True]:
         if train:
             db.set_train()
@@ -361,5 +355,4 @@ if __name__=="__main__":
         size,size_dims=db.size()
         print("\tDatapoints: dim (%s), size %s"%(size,size_dims))
         batch=len(db)
-     #   print("\tBatch amts: %s"%(batch))
-    """
+        print("\tBatch amts: %s"%(batch))
