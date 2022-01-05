@@ -275,11 +275,11 @@ def main():
     #$lrs=[0.003981071705534973]
     #regs=[0.00031622776601683794]
 
-    """
-    lrs = np.logspace(-3,-2,num=5)
-    regs = np.logspace(-8,-6,num=4) # -8,-3
-    des=[128]
-    #des=[128,256]
+    #"""
+    lrs = np.logspace(-6,0,num=20)
+    regs = np.logspace(-8,2,num=12) # -8,-3
+    des=[128,256]
+
     print(lrs)
     print(regs)
     print(des)
@@ -291,14 +291,14 @@ def main():
                 print("d_e: %s, lr: %s, reg: %s"%(str(d_e),str(lr),reg))
                 params = {
                         'd_e' : d_e,
-                        'epochs' : 3, # 6
+                        'epochs' : 6,
                         'lr' : lr,
                         'step_size' : 10,
                         'gamma' : 1,
                         'l2' : reg
                         }
 
-                (loss_t,acc_t,acc_maj),model=train_loop(dataset23, train_loader, params, checkpoint=True,load=10)
+                (loss_t,acc_t,acc_maj),model=train_loop(dataset23, train_loader, params, checkpoint=True)
                 cross_val[(d_e, lr, reg)]=(acc_maj, acc_t, loss_t) #TODO
 
         print(cross_val)
@@ -307,7 +307,7 @@ def main():
     vals = np.array(list(cross_val.values()))
     keys = np.array(list(cross_val.keys()))
     print(vals.sort())
-    """
+    #"""
 
     """
 
@@ -315,18 +315,19 @@ def main():
     #checkpoint=878
     """
 
+    """
     checkpoint=10
     d_e, lr, reg = 128, 0.0012689610031679222, 1e-6
     # lr: 0.001, reg: 1e-06
-    #lr = 1e-3
-    lr = 5e-4
+    #lr = 5e-4
+    lr = 1e-3
     #reg=1e-6
-    reg = 1e-3
+    reg = 1e-4
 
     print("Final train")
     params = {
             'd_e' : d_e,
-            'epochs' : 3,
+            'epochs' : 20_000,
             'lr' : lr,
             'step_size' : 10,
             'gamma' : 1,
@@ -337,7 +338,7 @@ def main():
     print(final_vals)
     print(final_stats)
     
-   # """
+   """
 
 
 if __name__=="__main__":

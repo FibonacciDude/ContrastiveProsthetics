@@ -15,30 +15,30 @@ class EMGNet(nn.Module):
         # similar architecture to https://doi.org/10.3390/s17030458
         self.conv_emg=nn.Sequential(
                 # conv -> bn -> relu
-                nn.BatchNorm2d(1,momentum=0), # normalize input based on batch
+                nn.BatchNorm2d(1,momentum=0,track_running_stats=False),
 
-                nn.Conv2d(1,64,(3,1),padding=(1,0)),     # maintain same shape
-                nn.BatchNorm2d(64,momentum=0),
+                nn.Conv2d(1,64,(3,3),padding=(1,1)),     # maintain same shape
+                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
 
-                nn.Conv2d(64,64,(3,1),padding=(1,0)),
-                nn.BatchNorm2d(64,momentum=0),
+                nn.Conv2d(64,64,(3,3),padding=(1,1)),
+                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
 
                 nn.Conv2d(64,64,(1,1)),
-                nn.BatchNorm2d(64,momentum=0),
+                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.ReLU(),
-                nn.Dropout(p=.1),
+                nn.Dropout(p=.5),
 
                 nn.Conv2d(64,64,(1,1)),
-                nn.BatchNorm2d(64,momentum=0),
+                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.ReLU(),
-                nn.Dropout(p=.1),
+                nn.Dropout(p=.5),
 
                 nn.Flatten(),
 
                 nn.Linear(WINDOW_MS*EMG_DIM*64, 512),
-                nn.BatchNorm1d(512,momentum=0),
+                nn.BatchNorm1d(512,momentum=0,track_running_stats=False),
                 nn.ReLU(),
                 nn.Dropout(p=.5),
                 )
@@ -46,27 +46,27 @@ class EMGNet(nn.Module):
         self.feedforward_acc=nn.Sequential(
                 nn.BatchNorm1d(ACC_DIM,momentum=0),
                 nn.Linear(ACC_DIM, 256),
-                nn.BatchNorm1d(256,momentum=0),
+                nn.BatchNorm1d(256,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
 
                 nn.Linear(256, 128),
-                nn.BatchNorm1d(128,momentum=0),
+                nn.BatchNorm1d(128,momentum=0,track_running_stats=False),
                 nn.ReLU(),
                 nn.Dropout(),
 
                 nn.Linear(128, 128),
-                nn.BatchNorm1d(128,momentum=0),
+                nn.BatchNorm1d(128,momentum=0,track_running_stats=False),
                 nn.ReLU(),
                 )
 
         self.fusion_head = nn.Sequential(
                 nn.Linear(512+128, 512),
-                nn.BatchNorm1d(512,momentum=0),
+                nn.BatchNorm1d(512,momentum=0,track_running_stats=False),
                 nn.ReLU(),
                 nn.Dropout(p=.5),
 
                 nn.Linear(512, 256),
-                nn.BatchNorm1d(256,momentum=0),
+                nn.BatchNorm1d(256,momentum=0,track_running_stats=False),
                 nn.ReLU(),
 
                 )
@@ -101,21 +101,21 @@ class GLOVENet(nn.Module):
 
         self.conv=nn.Sequential(
                 # conv -> bn -> relu
-                nn.BatchNorm2d(1,momentum=0), # normalize input based on batch
+                nn.BatchNorm2d(1,momentum=0,track_running_stats=False), # normalize input based on batch
 
-                nn.Conv2d(1,64,(3,1),padding=(1,0)),     # maintain same shape
-                nn.BatchNorm2d(64,momentum=0),
+                nn.Conv2d(1,64,(3,3),padding=(1,1)),     # maintain same shape
+                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
 
                 nn.Conv2d(64,32,(1,1)),
-                nn.BatchNorm2d(32,momentum=0),
+                nn.BatchNorm2d(32,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
                 nn.Dropout(p=.5),
 
                 nn.Flatten(),
 
                 nn.Linear(WINDOW_MS*GLOVE_DIM*32, 256),
-                nn.BatchNorm1d(256,momentum=0),
+                nn.BatchNorm1d(256,momentum=0,track_running_stats=False),
                 nn.ReLU(),
                 )
 
