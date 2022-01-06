@@ -12,8 +12,8 @@ import tqdm
 from utils import RunningStats
 
 torch.manual_seed(42)
-np.set_printoptions(precision=4, suppress=True)
-torch.set_printoptions(precision=4)
+#np.set_printoptions(precision=4, suppress=True)
+#torch.set_printoptions(precision=4)
 
 def get_np(dbnum, p_dir, n):
     E_mat=sio.loadmat("../db%s/s%s/S%s_E%s_A1"%(dbnum,p_dir,p_dir,n))

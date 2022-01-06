@@ -2,12 +2,27 @@ import torch
 import torch.nn as nn
 import numpy as np
 from constants import *
+from utils import RunningStats
+
+class AdaBN1d(nn.Module):
+    def __init__(self, device="cuda"):
+        super(EMGNet,self).__init__()
+        self.device=torch.device(device)
+        self.buffer = []
+        self.subjects = []
+        self.to(device)
+
+    def forward(self, X, subject):
+        if subject not in self.subjects:
+            self.subjects.add(subject)
+            self.buffer.add(RunningStats(X))
+
 
 
 class EMGNet(nn.Module):
     def __init__(self, d_e, train=True, device="cuda"):
         super(EMGNet,self).__init__()
-        self.device=device
+        self.device=torch.device(device)
         self.d_e=d_e
 
         # momentum = 0 and batch per subject in order to have adaptive normalization (https://doi.org/10.1016/j.patcog.2018.03.005)
@@ -85,7 +100,7 @@ class EMGNet(nn.Module):
     def l2(self):
         reg_loss = 0
         for name,param in self.named_parameters():
-            if 'bn' not in name:
+            if 'bn' not in name and 'bias' not in name:
                 reg_loss+=torch.norm(param)
         return reg_loss
         
