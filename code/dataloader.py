@@ -48,14 +48,16 @@ class DB23(data.Dataset):
         _rand_perm_test=torch.randperm(MAX_TEST_REPS, device=self.device)
         _rand_perm_train=torch.randperm(MAX_TRAIN_REPS, device=self.device)
 
-        self.rep_rand_train=torchize(TRAIN_REPS, device=self.device)[_rand_perm_train[:-1]]-1
-        self.rep_rand_val=torchize(TRAIN_REPS, device=self.device)[_rand_perm_train[-1:]]-1
-        self.rep_rand_test=torchize(TEST_REPS, device=self.device)[_rand_perm_test]-1
+        train_reps = torchize(TRAIN_REPS, device=device)
+        test_reps = torchize(TEST_REPS, device=device)
+        self.rep_rand_train=train_reps[_rand_perm_train[:-1]]-1
+        self.rep_rand_val=train_reps[_rand_perm_train[-1:]]-1
+        self.rep_rand_test=test_reps[_rand_perm_test]-1
         self.task_rand=torch.randperm(MAX_TASKS, device=self.device)
 
-        # not rand
-        #self.window_rand=torch.randperm(WINDOW_OUTPUT_DIM, device=self.device)
-        self.window_rand=torch.arange(end=WINDOW_OUTPUT_DIM, device=self.device)
+        # for voting later?
+        #self.window=torch.arange(end=WINDOW_OUTPUT_DIM, device=self.device)
+        self.window=torch.randperm(WINDOW_OUTPUT_DIM, device=self.device)
 
         self.path="/home/breezy/ULM/prosthetics/db23/"
         #self.path="../"
@@ -66,6 +68,7 @@ class DB23(data.Dataset):
         elif self.val:
             return self.MAX_PEOPLE_TRAIN*1*MAX_WINDOW_BLOCKS
         else:
+            # TODO: Change
             return MAX_PEOPLE*(MAX_TEST_REPS//BLOCK_SIZE)*MAX_WINDOW_BLOCKS
 
     def set_train(self):
@@ -88,7 +91,9 @@ class DB23(data.Dataset):
             dims=(self.MAX_PEOPLE_TRAIN,self.MAX_TASKS_TRAIN,1,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
             return np.prod(dims), dims
         else:
-            dims=(MAX_PEOPLE,MAX_TASKS,MAX_TEST_REPS,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
+            # TODO: Change back
+            #dims=(MAX_PEOPLE,MAX_TASKS,MAX_TEST_REPS,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
+            dims=(MAX_PEOPLE,self.MAX_TASKS_TRAIN,MAX_TEST_REPS,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
             return np.prod(dims), dims
 
     def load_subject(self, subject):
@@ -142,10 +147,10 @@ class DB23(data.Dataset):
         # emg, acc, glove, stimulus, repetition
         stim_mask, rep_mask=(stim==stimulus), (rep==repetition) #(0 if stimulus==0 else repetition))
         mask=(stim_mask&rep_mask).squeeze()
-        if mask.sum() < TOTAL_WINDOW_SIZE*(Hz//1000):
+        if mask.sum() < TOTAL_WINDOW_SIZE:
             print("Smaller size: %s, stimulus %s, repetition %s, %s"%(str(self.person), str(stimulus), str(repetition), str(mask.sum())))
             # start 100 ms after it says it has started
-            time_mask=np.array([np.arange(0,Hz//1000*WINDOW_MS,Hz//1000,dtype=np.uint8)]*AMT_WINDOWS)
+            time_mask=np.array([np.arange(WINDOW_MS,dtype=np.uint8)]*AMT_WINDOWS)
             emg_=emg[mask][time_mask] * 16 # 15 ms window
             acc_=acc[mask][time_mask] * 16
             glove_=glove[mask][time_mask] * 16
@@ -157,8 +162,8 @@ class DB23(data.Dataset):
             acc_=acc[mask][self.time_mask] * 16
             glove_=glove[mask][self.time_mask] * 16 # / 2**3
 
-        # filter - 20 Hz to 400 Hz
-        emg_=self.filter(emg_, (20, 400), butterworth_order=4,btype="bandpass") # bandpass filter
+        # filter - 5 Hz to 500 Hz
+        emg_=self.filter(emg_, (10, 500), butterworth_order=4,btype="bandpass") # bandpass filter
         # take out outliers
         iqr_glove=np.subtract(*np.percentile(glove_, [75, 25], axis=0))
         iqr_acc=np.subtract(*np.percentile(acc_, [75, 25], axis=0))
@@ -188,7 +193,8 @@ class DB23(data.Dataset):
         subject -> reps -> stim -> amt windows -> window_ms (1 frame per ms) -> dim (emg,acc,glove)
         """
         PEOPLE=PEOPLE_D2+PEOPLE_D3
-        self.time_mask=np.arange(100,Hz//1000*TOTAL_WINDOW_SIZE+100,Hz//1000,dtype=np.uint8)
+        self.time_mask=np.arange(TOTAL_WINDOW_SIZE,dtype=np.uint8)
+        tasks_mask_train=self.task_rand[:-self.NEW_TASKS] # if (self.train or self.val) else self.task_rand
 
         self.emg_stats=RunningStats()
         self.acc_stats=RunningStats()
@@ -220,9 +226,11 @@ class DB23(data.Dataset):
                         emg,acc,glove=self.get_stim_rep(stim,rep)
                         emg,acc,glove=torchize(emg),torchize(acc),torchize(glove)
 
-                        self.emg_stats.push(emg) 
-                        self.acc_stats.push(acc) 
-                        self.glove_stats.push(glove) 
+                        # only add if in the training set
+                        if (person in self.people_rand_d2 or person in self.people_rand_d3[:-self.NEW_PEOPLE]) and rep in self.rep_rand_train and stim in tasks_mask_train:
+                            self.emg_stats.push(emg) 
+                            self.acc_stats.push(acc) 
+                            self.glove_stats.push(glove) 
 
                         EMG[stim,rep-1]=emg
                         ACC[stim,rep-1]=acc
@@ -263,11 +271,14 @@ class DB23(data.Dataset):
 
     @property
     def TASKS(self):
-        return self.MAX_TASKS_TRAIN+1 if (self.train or self.val) else MAX_TASKS+1
+        # TODO: Change this back
+        return self.MAX_TASKS_TRAIN+1 # if (self.train or self.val) else MAX_TASKS+1
 
     @property
     def tasks_mask(self):
-        tasks_mask=self.task_rand[:-self.NEW_TASKS] if (self.train or self.val) else self.task_rand
+        #tasks_mask=self.task_rand[:-self.NEW_TASKS] if (self.train or self.val) else self.task_rand
+        # TODO: remove, this. This is to test hypothesis that the new tasks are "messing up" the batch normalization
+        tasks_mask=self.task_rand[:-self.NEW_TASKS] # if (self.train or self.val) else self.task_rand
         tasks_mask=torch.cat((tasks_mask, torchize([0],device=self.device)))
         return tasks_mask
 
@@ -288,6 +299,18 @@ class DB23(data.Dataset):
         window_block = sub_wind_idx % MAX_WINDOW_BLOCKS
         return (rep_block, subject, window_block)
 
+    def slice_batch(self, tensor, tmask, bmask, wmask, dim):
+        shape=(BLOCK_SIZE*self.TASKS, TOTAL_WINDOW_SIZE, dim)
+        tensor=tensor[tmask, bmask].reshape(shape)
+        # stride across the entire window (moving window of window_ms size)
+        stride=(TOTAL_WINDOW_SIZE*dim, WINDOW_STRIDE, dim, 1)
+        tensor=torch.as_strided(tensor, (shape[0], WINDOW_OUTPUT_DIM, WINDOW_MS, dim), stride)
+        # take random sample from this window
+        # shape (TASKS*BLOCK_SIZE,WINDOW_BLOCK,WINDOW_MS,DIM)
+        # (TASKS*BLOCK_SIZE*WINDOW_BLOCK,WINDOW_MS,DIM)
+        return tensor[:, wmask].reshape(-1, 1, WINDOW_MS, dim)
+
+
     def __getitem__(self, batch_idx):
         # batch_idx -> rep_block x (subject x window_block)
         # return batch of shape (2 (rep) * amtwindows * maxtask) x windowms x respective dim
@@ -297,66 +320,29 @@ class DB23(data.Dataset):
         rep_block, subject, window_block = self.get_idx_(batch_idx)
 
         block_mask=self.block_mask[rep_block*BLOCK_SIZE:(rep_block+1)*BLOCK_SIZE]
-        window_mask=self.window_rand[window_block*WINDOW_BLOCK:(window_block+1)*WINDOW_BLOCK]
+        window_mask=self.window[window_block*WINDOW_BLOCK:(window_block+1)*WINDOW_BLOCK]
         tasks_mask=self.tasks_mask
-
 
         if subject >= MAX_PEOPLE_D2:
             subject = self.people_rand_d3[subject%MAX_PEOPLE_D2].item()
         else:
             subject = self.people_rand_d2[subject].item()
 
-        # shape = (41, 6, 15, 10, dim)
+        # shape = (41, 6, window_ms, amt_windows, dim), specific case
         EMG,ACC,GLOVE=self.load_subject(subject)
 
-        EMG=EMG[tasks_mask, block_mask]
-        shape=(BLOCK_SIZE*(self.TASKS), TOTAL_WINDOW_SIZE, EMG_DIM)
-        EMG=EMG.reshape(shape)
-        # stride across 150 ms (moving window of window_ms size)
-        stride=(TOTAL_WINDOW_SIZE*EMG_DIM, WINDOW_STRIDE, EMG_DIM, 1)
-        # for experts only (hehe)
-        EMG=torch.as_strided(EMG, (shape[0], WINDOW_OUTPUT_DIM, WINDOW_MS, EMG_DIM), stride)
-        EMG=EMG[:, window_mask]
-        EMG=EMG.reshape(-1, 1, WINDOW_MS, EMG_DIM)
-
-        GLOVE=GLOVE[tasks_mask, block_mask]
-        shape=(BLOCK_SIZE*(self.TASKS), TOTAL_WINDOW_SIZE, GLOVE_DIM)
-        GLOVE=GLOVE.reshape(shape)
-        # stride across 150 ms (moving window of window_ms size)
-        stride=(TOTAL_WINDOW_SIZE*GLOVE_DIM, WINDOW_STRIDE, GLOVE_DIM, 1)
-        GLOVE=torch.as_strided(GLOVE, (shape[0], WINDOW_OUTPUT_DIM, WINDOW_MS, GLOVE_DIM), stride)
-        GLOVE=GLOVE[:, window_mask]
-        GLOVE=GLOVE.reshape(-1, 1, WINDOW_MS, GLOVE_DIM)
-
-        ACC=ACC[tasks_mask, block_mask]
-        shape=(BLOCK_SIZE*(self.TASKS), TOTAL_WINDOW_SIZE, ACC_DIM)
-        ACC=ACC.reshape(shape)
-        # stride across 150 ms (moving window of window_ms size)
-        stride=(TOTAL_WINDOW_SIZE*ACC_DIM, WINDOW_STRIDE, ACC_DIM, 1)
-        ACC=torch.as_strided(ACC, (shape[0], WINDOW_OUTPUT_DIM, WINDOW_MS, ACC_DIM), stride)
-        ACC=ACC[:, window_mask]
-        # shape (TASKS*BLOCK_SIZE,WINDOW_BLOCK,WINDOW_MS,DIM)
-        # (TASKS*BLOCK_SIZE*WINDOW_BLOCK,WINDOW_MS,DIM)
-        ACC=ACC.reshape(-1, WINDOW_MS, ACC_DIM)
-        #now average over the window_ms
-        ACC=ACC.mean(1) # (-1, ACC_DIM)
+        EMG=self.slice_batch(EMG, tasks_mask, block_mask, window_mask, EMG_DIM)
+        GLOVE=self.slice_batch(GLOVE, tasks_mask, block_mask, window_mask, GLOVE_DIM)
+        ACC=self.slice_batch(ACC, tasks_mask, block_mask, window_mask, ACC_DIM)
+        ACC=ACC.squeeze(1).mean(1)
 
         return (EMG,GLOVE,ACC)
 
-if __name__=="__main__":
-    db=DB23(new_people=3,new_tasks=4)
 
-    t=time.time()
-    #db.load_dataset()
-    print(time.time()-t)
+def load(db):
+    db.load_dataset()
 
-    t=time.time()
-    #for i in PEOPLE_D3+PEOPLE_D2:
-    #    EMG,ACC,GLOVE=db[i]
-    #    print(EMG.shape, i)
-    #db[0]
-    #print(time.time()-t)
-    #"""
+def info(db):
     for train in [False, True]:
         if train:
             db.set_train()
@@ -366,5 +352,9 @@ if __name__=="__main__":
         size,size_dims=db.size()
         print("\tDatapoints: dim (%s), size %s"%(size,size_dims))
         batch=len(db)
-     #   print("\tBatch amts: %s"%(batch))
-    #"""
+        print("\tBatch amts: %s"%(batch))
+        
+if __name__=="__main__":
+    db=DB23(new_people=3,new_tasks=4)
+    load(db)
+    #info(db)

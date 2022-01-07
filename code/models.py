@@ -18,7 +18,6 @@ class AdaBN1d(nn.Module):
             self.buffer.add(RunningStats(X))
 
 
-
 class EMGNet(nn.Module):
     def __init__(self, d_e, train=True, device="cuda"):
         super(EMGNet,self).__init__()
@@ -28,72 +27,89 @@ class EMGNet(nn.Module):
         # momentum = 0 and batch per subject in order to have adaptive normalization (https://doi.org/10.1016/j.patcog.2018.03.005)
 
         # similar architecture to https://doi.org/10.3390/s17030458
+
         self.conv_emg=nn.Sequential(
                 # conv -> bn -> relu
                 nn.BatchNorm2d(1,momentum=0,track_running_stats=False),
 
-                nn.Conv2d(1,64,(3,3),padding=(1,1)),     # maintain same shape
+                # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
+                # larger kernel
+                nn.Conv2d(1,64,(5,3),padding=(2,1)),
                 nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
 
+                # smaller kernel
                 nn.Conv2d(64,64,(3,3),padding=(1,1)),
                 nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
 
                 nn.Conv2d(64,64,(1,1)),
                 nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
-                nn.ReLU(),
+                nn.LeakyReLU(),
+
+                # one more layer (why not?, it acts like a bottleneck)
+                nn.Conv2d(64,64,(3,3),padding=(1,1)),
+                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
+                nn.LeakyReLU(),
                 nn.Dropout(p=.5),
 
                 nn.Conv2d(64,64,(1,1)),
                 nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
-                nn.ReLU(),
+                nn.LeakyReLU(),
+                # WINDOW_MS x EMG_DIM -> 1 x EMG_DIM
+                nn.AvgPool2d((WINDOW_MS, 1)),
                 nn.Dropout(p=.5),
 
                 nn.Flatten(),
 
-                nn.Linear(WINDOW_MS*EMG_DIM*64, 512),
-                nn.BatchNorm1d(512,momentum=0,track_running_stats=False),
-                nn.ReLU(),
-                nn.Dropout(p=.5),
-                )
-
-        self.feedforward_acc=nn.Sequential(
-                nn.BatchNorm1d(ACC_DIM,momentum=0),
-                nn.Linear(ACC_DIM, 256),
-                nn.BatchNorm1d(256,momentum=0,track_running_stats=False),
+                nn.Linear(EMG_DIM*64, 512),
+                nn.BatchNorm1d(512, momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
-
-                nn.Linear(256, 128),
-                nn.BatchNorm1d(128,momentum=0,track_running_stats=False),
-                nn.ReLU(),
-                nn.Dropout(),
-
-                nn.Linear(128, 128),
-                nn.BatchNorm1d(128,momentum=0,track_running_stats=False),
-                nn.ReLU(),
                 )
 
-        self.fusion_head = nn.Sequential(
-                nn.Linear(512+128, 512),
-                nn.BatchNorm1d(512,momentum=0,track_running_stats=False),
-                nn.ReLU(),
-                nn.Dropout(p=.5),
+        # No fusion for now. 
+        # Reason: The classification might be affected with different activites
+        # and the acceleration data shifts for different windows (relevant to static)
+        self.use_acc = False
 
-                nn.Linear(512, 256),
-                nn.BatchNorm1d(256,momentum=0,track_running_stats=False),
-                nn.ReLU(),
+        if self.use_acc:
+            self.feedforward_acc=nn.Sequential(
+                    nn.BatchNorm1d(ACC_DIM,momentum=0),
+                    nn.Linear(ACC_DIM, 256),
+                    nn.BatchNorm1d(256,momentum=0,track_running_stats=False),
+                    nn.LeakyReLU(),
 
-                )
+                    nn.Linear(256, 128),
+                    nn.BatchNorm1d(128,momentum=0,track_running_stats=False),
+                    nn.LeakyReLU(),
+                    nn.Dropout(),
 
-        self.proj_mat = nn.Linear(256, self.d_e)
+                    nn.Linear(128, 128),
+                    nn.BatchNorm1d(128,momentum=0,track_running_stats=False),
+                    nn.LeakyReLU(),
+                    )
+
+            self.fusion_head = nn.Sequential(
+                    nn.BatchNorm1d(1024+128,momentum=0,track_running_stats=False),
+                    nn.LeakyReLU(),
+                    nn.Linear(1024+128, 512),
+                    nn.Dropout(p=.5),
+
+                    nn.BatchNorm1d(512,momentum=0,track_running_stats=False),
+                    nn.LeakyReLU(),
+                    )
+
+        self.proj_mat = nn.Linear(512, self.d_e)
 
     def forward(self, EMG, ACC):
         ACC=ACC.squeeze(1)
         out_emg=self.conv_emg(EMG)
-        out_acc=self.feedforward_acc(ACC)
-        out=torch.cat((out_emg,out_acc),dim=1)
-        out=self.fusion_head(out)
+        if self.use_acc:
+            out_acc=self.feedforward_acc(ACC)
+            out=torch.cat((out_emg,out_acc),dim=1)
+            out=self.fusion_head(out)
+        else:
+            out=out_emg
         out=self.proj_mat(out)
         return out
 
@@ -114,27 +130,42 @@ class GLOVENet(nn.Module):
 
         # momentum = 0 and batch per subject in order to have adaptive normalization (https://doi.org/10.1016/j.patcog.2018.03.005)
 
+        # This network is someone large compared to the complexity of the input data
+        # in order to prevent underfitting. This need to have the same representation 
+        # as the EMG conv net layer so it must be similarly powerful.
+
         self.conv=nn.Sequential(
                 # conv -> bn -> relu
-                nn.BatchNorm2d(1,momentum=0,track_running_stats=False), # normalize input based on batch
+                # Why do we have adabn for glove?
+                #nn.BatchNorm2d(1,momentum=0,track_running_stats=False), # normalize input based on batch
+                # There is not inherent locality to the joints in the input space. 
+                # There is not zero time information. But there is not (and should not)
+                # be that much.
 
-                nn.Conv2d(1,64,(3,3),padding=(1,1)),     # maintain same shape
-                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
+                nn.Conv2d(1,512,(1, GLOVE_DIM),padding=(0,0)),
+                # 3 (in the 15 ms case) x 1 
+                nn.BatchNorm2d(512,momentum=.1),
                 nn.LeakyReLU(),
 
-                nn.Conv2d(64,32,(1,1)),
-                nn.BatchNorm2d(32,momentum=0,track_running_stats=False),
+                nn.Conv2d(512,512,(1,1)),
+                nn.BatchNorm2d(512,momentum=.1),
                 nn.LeakyReLU(),
+                nn.Dropout(p=.5),
+
+                nn.Conv2d(512, 512,(1,1)),
+                nn.BatchNorm2d(512,momentum=.1),
+                nn.LeakyReLU(),
+                nn.AvgPool2d((WINDOW_MS, 1)),
                 nn.Dropout(p=.5),
 
                 nn.Flatten(),
 
-                nn.Linear(WINDOW_MS*GLOVE_DIM*32, 256),
-                nn.BatchNorm1d(256,momentum=0,track_running_stats=False),
-                nn.ReLU(),
+                nn.Linear(512, 512),
+                nn.BatchNorm1d(512,momentum=.1),
+                nn.LeakyReLU(),
                 )
 
-        self.proj_mat = nn.Linear(256, self.d_e)
+        self.proj_mat = nn.Linear(512, self.d_e)
 
     def forward(self, GLOVE):
         out=self.conv(GLOVE)
@@ -144,7 +175,7 @@ class GLOVENet(nn.Module):
     def l2(self):
         reg_loss = 0
         for name,param in self.named_parameters():
-            if 'bn' not in name:
+            if 'bn' not in name and 'bias' not in name:
                 reg_loss+=torch.norm(param)
         return reg_loss
 

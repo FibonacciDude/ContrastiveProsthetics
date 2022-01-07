@@ -223,7 +223,7 @@ def validate(model, dataset):
 
 def train_loop(dataset, train_loader, params, checkpoint=False,checkpoint_dir="../checkpoints/model", annealing=False,load=None):
 
-    # crossvalidation parameters
+    # cross validation parameters
     model = Model(d_e=params['d_e'], train_model=True)
     if load is not None:
         print("Loading model")
@@ -328,13 +328,14 @@ def main():
 
     #lrs = np.logspace(-3,-1,num=8)
     #regs = np.logspace(-8,-4,num=5) # -8,-3
-    #lrs = np.logspace(-6,-0,num=20)
-    #regs = np.logspace(-8,2,num=12) # -8,-3
-
-    lrs=[8.858667904100832e-06] #, 1.8329807108324375e-05]
-    regs=[0.1873817422860383]
+    #"""
+    lrs = np.logspace(-6,-0,num=20)
+    regs = np.logspace(-8,2,num=12) # -8,-3
     des=[128]
-    epochs=1
+
+    #lrs=[8.858667904100832e-06] #, 1.8329807108324375e-05]
+    #regs=[0.1873817422860383]
+    epochs=6
     cross_val = cross_validate(lrs, regs, des, dataset23, train_loader, epochs=epochs, save=True)
     pprint(cross_val)
 
@@ -345,6 +346,9 @@ def main():
     best_key = keys[best_val]
     print("Best combination: %s" % str(best_key))
     print(vals[:, 1].sort())
+    #"""
+
+    #best_key = (128, 3.35981829e-04, 5.33669923e-06)
 
     # test model
     d_e, lr, reg = best_key     # best model during validation
@@ -352,17 +356,18 @@ def main():
     print("Final training of model")
     params = {
             'd_e' : int(d_e),
-            'epochs' : 5,
+            'epochs' : 20_000,
             'lr' : lr,
             'l2' : reg
             }
-    final_vals, model = train_loop(dataset23, train_loader, params, checkpoint=True,annealing=True)
+
+    final_vals, model = train_loop(dataset23, train_loader, params, checkpoint=True,annealing=True, checkpoint_dir="../data/model_v1")
     final_stats=test(model, dataset23)
 
+    print("Final validation model statistics")
     print(final_vals)
-    print("loss,    correct,    correct_voting")
+    print("loss,\t\tcorrect,\t\tcorrect_voting")
     print(final_stats)
-
 
 if __name__=="__main__":
     main()
