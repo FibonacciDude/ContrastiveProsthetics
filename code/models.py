@@ -34,6 +34,7 @@ class EMGNet(nn.Module):
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
+                # TODO: add muscle independence
                 nn.Conv2d(1,64,(5,3),padding=(2,1)),
                 nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
@@ -58,11 +59,13 @@ class EMGNet(nn.Module):
                 nn.LeakyReLU(),
                 # WINDOW_MS x EMG_DIM -> 1 x EMG_DIM
                 nn.AvgPool2d((WINDOW_MS, 1)),
+                #nn.AvgPool2d((WINDOW_MS//5, 1), stride=(2, 1)),
                 nn.Dropout(p=.5),
 
                 nn.Flatten(),
 
                 nn.Linear(EMG_DIM*64, 512),
+                #nn.Linear(EMG_DIM*64*((WINDOW_MS-WINDOW_MS//5)//2+1), 512),
                 nn.BatchNorm1d(512, momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
                 )
@@ -133,35 +136,34 @@ class GLOVENet(nn.Module):
         # This network is someone large compared to the complexity of the input data
         # in order to prevent underfitting. This need to have the same representation 
         # as the EMG conv net layer so it must be similarly powerful.
+        # TODO: Make smaller though? (I think it might be overfitting)
+
+        # There should not be any temporal information as the Hz of the glove is 
+        # much lower. Take the mean.
+
+        GLOVE=GLOVE.mean(dim=2, keepdim=True)
 
         self.conv=nn.Sequential(
-                # conv -> bn -> relu
-                # Why do we have adabn for glove?
-                #nn.BatchNorm2d(1,momentum=0,track_running_stats=False), # normalize input based on batch
-                # There is not inherent locality to the joints in the input space. 
-                # There is not zero time information. But there is not (and should not)
-                # be that much.
-
+                # Initial glove features
                 nn.Conv2d(1,512,(1, GLOVE_DIM),padding=(0,0)),
                 # 3 (in the 15 ms case) x 1 
-                nn.BatchNorm2d(512,momentum=.1),
+                #nn.BatchNorm2d(512,momentum=.1),
+                nn.BatchNorm2d(512, momentum=0, track_running_stats=False),
                 nn.LeakyReLU(),
-
-                nn.Conv2d(512,512,(1,1)),
-                nn.BatchNorm2d(512,momentum=.1),
-                nn.LeakyReLU(),
-                nn.Dropout(p=.5),
-
-                nn.Conv2d(512, 512,(1,1)),
-                nn.BatchNorm2d(512,momentum=.1),
-                nn.LeakyReLU(),
-                nn.AvgPool2d((WINDOW_MS, 1)),
-                nn.Dropout(p=.5),
-
                 nn.Flatten(),
 
                 nn.Linear(512, 512),
-                nn.BatchNorm1d(512,momentum=.1),
+                nn.BatchNorm1d(512, momentum=0, track_running_stats=False),
+                nn.LeakyReLU(),
+                nn.Dropout(p=.5),
+                
+                nn.Linear(512, 512),
+                nn.BatchNorm1d(512, momentum=0, track_running_stats=False),
+                nn.LeakyReLU(),
+                nn.Dropout(p=.5),
+
+                nn.Linear(512, 512),
+                nn.BatchNorm1d(512, momentum=0, track_running_stats=False),
                 nn.LeakyReLU(),
                 )
 
@@ -178,5 +180,4 @@ class GLOVENet(nn.Module):
             if 'bn' not in name and 'bias' not in name:
                 reg_loss+=torch.norm(param)
         return reg_loss
-
 

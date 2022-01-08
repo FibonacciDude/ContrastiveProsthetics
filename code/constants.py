@@ -14,20 +14,26 @@ MAX_REPS=len(REPS)
 BLOCK_SIZE=1    # 2 might be too large of a batch size
 TASK_DIST=[17,23]
 MAX_TASKS=sum(TASK_DIST)
-# In ms.
-TOTAL_WINDOW_SIZE=1200  # we could do more data
-WINDOW_MS=15
+Hz=2000
+FACTOR=Hz//1000
+Hz_glove=25 # much, much lower
+MS_GLOVE_SWITCH=(1/Hz_glove)*1000   # in ms
+# In ms*1000/Hz
+TOTAL_WINDOW_SIZE=800  # we could do more data, in ms
+WINDOW_MS=20
+# to  make it even for the mean in the network
+assert MS_GLOVE_SWITCH%WINDOW_MS==0
 WINDOW_STRIDE=10
 WINDOW_OUTPUT_DIM=TOTAL_WINDOW_SIZE//WINDOW_STRIDE
-WINDOW_BLOCK=15
+WINDOW_BLOCK=20
 assert WINDOW_OUTPUT_DIM%WINDOW_BLOCK==0
 MAX_WINDOW_BLOCKS=WINDOW_OUTPUT_DIM//WINDOW_BLOCK
 assert TOTAL_WINDOW_SIZE%WINDOW_OUTPUT_DIM==0
-Hz=2000
 assert TOTAL_WINDOW_SIZE % WINDOW_MS == 0, "Window ms does not fit into total window length"
 AMT_WINDOWS=TOTAL_WINDOW_SIZE//WINDOW_MS
 WINDOW_SIZE=int(Hz*(TOTAL_WINDOW_SIZE/1000))
-GLOVE_DIM=22
+# TODO: see effect
+GLOVE_DIM=22 - 1    # take out 11th sensor (going crazy)
 EMG_DIM=12
 ACC_DIM=EMG_DIM*3
 
