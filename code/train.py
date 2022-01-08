@@ -166,23 +166,24 @@ def test(model, dataset):
     for i, (EMG,GLOVE,ACC) in enumerate(test_loader):
         cnt=total//EMG.shape[0]
         EMG,ACC,GLOVE=EMG.squeeze(0),ACC.squeeze(0),GLOVE.squeeze(0)
-        logits = model.forward(EMG,ACC,GLOVE,total_tasks,total_tasks)
+        with torch.no_grad():
+            logits = model.forward(EMG,ACC,GLOVE,total_tasks,total_tasks)
 
-        # take mean for all 15 ms windows
-        logits_save = logits.detach().cpu().numpy()
-        for j, log in enumerate(logits):
-            np.save('../data/logits_%d_%d.npy' % (i, j), logits_save)
+            # take mean for all 15 ms windows
+            logits_save = logits.detach().cpu().numpy()
+            for j, log in enumerate(logits):
+                np.save('../data/logits_%d_%d.npy' % (i, j), logits_save)
 
-        logits_labels.append(dataset.get_idx_(i))
+            logits_labels.append(dataset.get_idx_(i))
 
-        loss=model.loss(logits)
-        total_loss.append(loss.item())
+            loss=model.loss(logits)
+            total_loss.append(loss.item())
 
-        correct_maj,correct=model.correct_glove(logits)
+            correct_maj,correct=model.correct_glove(logits.detach())
 
-        total_correct.append(correct)
-        total_correct_voting.append(correct_maj)
-        total+=EMG.shape[0]
+            total_correct.append(correct)
+            total_correct_voting.append(correct_maj)
+            total+=EMG.shape[0]
 
     total_loss=np.array(total_loss)
     logits_labels=np.array(logits_labels)
@@ -276,9 +277,10 @@ def train_loop(dataset, train_loader, params, checkpoint=False,checkpoint_dir=".
         print("Current epoch %d, train_loss: %.4f, val loss: %.4f, acc_val: %.6f, acc_maj: %.4f, acc_train: %.4f" % (e, loss_train, loss_val, acc, acc_maj, acc_train))
 
         final_val_acc=(loss_val,acc,acc_maj)
-        val_losses[e]=acc
+        val_losses[e]=loss_val
 
-        if checkpoint and acc >= max(list(val_losses.values())):
+        if checkpoint and loss_val <= max(list(val_losses.values())):
+            print("Checkpointing model...")
             torch.save(model.state_dict(), checkpoint_dir+"%d.pt"%counter)
             counter+=1
 
@@ -328,15 +330,18 @@ def main():
 
     #lrs = np.logspace(-3,-1,num=8)
     #regs = np.logspace(-8,-4,num=5) # -8,-3
-    #"""
-    lrs = np.logspace(-6,-0,num=20)
-    regs = np.logspace(-8,2,num=12) # -8,-3
+
+    """
+    #lrs = np.logspace(-6,-0,num=20)
+    #regs = np.logspace(-8,2,num=12) # -8,-3
+    lrs = np.logspace(-4,-3, num=10)
+    regs = list(np.logspace(-9,-7,num=4))+[0] # -8,-3
     des=[128]
 
     #lrs=[8.858667904100832e-06] #, 1.8329807108324375e-05]
     #regs=[0.1873817422860383]
     epochs=6
-    cross_val = cross_validate(lrs, regs, des, dataset23, train_loader, epochs=epochs, save=True)
+    #cross_val = cross_validate(lrs, regs, des, dataset23, train_loader, epochs=epochs, save=True)
     pprint(cross_val)
 
     # get best
@@ -346,9 +351,10 @@ def main():
     best_key = keys[best_val]
     print("Best combination: %s" % str(best_key))
     print(vals[:, 1].sort())
-    #"""
+    """
 
     #best_key = (128, 3.35981829e-04, 5.33669923e-06)
+    best_key =  (128, 1.62377674e-04, 5.33669923e-06)
 
     # test model
     d_e, lr, reg = best_key     # best model during validation
@@ -356,12 +362,12 @@ def main():
     print("Final training of model")
     params = {
             'd_e' : int(d_e),
-            'epochs' : 20_000,
+            'epochs' : 6,
             'lr' : lr,
             'l2' : reg
             }
 
-    final_vals, model = train_loop(dataset23, train_loader, params, checkpoint=True,annealing=True, checkpoint_dir="../data/model_v1")
+    final_vals, model = train_loop(dataset23, train_loader, params, checkpoint=True,annealing=True, checkpoint_dir="../checkpoints/model_v2")
     final_stats=test(model, dataset23)
 
     print("Final validation model statistics")

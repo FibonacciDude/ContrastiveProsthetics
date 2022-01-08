@@ -45,14 +45,20 @@ class DB23(data.Dataset):
         self.people_rand_d2=torch.randperm(MAX_PEOPLE_D2, device=self.device)
         self.people_rand_d3=torch.randperm(MAX_PEOPLE_D3, device=self.device)
         # Take by blocks of *2*
-        _rand_perm_test=torch.randperm(MAX_TEST_REPS, device=self.device)
         _rand_perm_train=torch.randperm(MAX_TRAIN_REPS, device=self.device)
+        _rand_perm_test=torch.randperm(MAX_TEST_REPS, device=self.device)
 
         train_reps = torchize(TRAIN_REPS, device=device)
         test_reps = torchize(TEST_REPS, device=device)
         self.rep_rand_train=train_reps[_rand_perm_train[:-1]]-1
-        self.rep_rand_val=train_reps[_rand_perm_train[-1:]]-1
-        self.rep_rand_test=test_reps[_rand_perm_test]-1
+        #self.rep_rand_val=train_reps[_rand_perm_train[-1:]]-1
+        #self.rep_rand_test=test_reps[_rand_perm_test]-1
+
+        # TODO: test and remove something real quick
+        self.rep_rand_val=test_reps[_rand_perm_test[-1:]]-1
+        self.rep_rand_test=torch.cat((train_reps[_rand_perm_train[-1:]], test_reps[_rand_perm_test[:1]]))-1
+        #print(self.rep_rand_train+1, self.rep_rand_val+1, self.rep_rand_test+1)
+
         self.task_rand=torch.randperm(MAX_TASKS, device=self.device)
 
         # for voting later?
@@ -68,8 +74,9 @@ class DB23(data.Dataset):
         elif self.val:
             return self.MAX_PEOPLE_TRAIN*1*MAX_WINDOW_BLOCKS
         else:
-            # TODO: Change
-            return MAX_PEOPLE*(MAX_TEST_REPS//BLOCK_SIZE)*MAX_WINDOW_BLOCKS
+            # TODO: Change back
+            #return MAX_PEOPLE*(MAX_TEST_REPS//BLOCK_SIZE)*MAX_WINDOW_BLOCKS
+            return self.MAX_PEOPLE_TRAIN*(MAX_TEST_REPS//BLOCK_SIZE)*MAX_WINDOW_BLOCKS
 
     def set_train(self):
         self.train=True
@@ -93,7 +100,7 @@ class DB23(data.Dataset):
         else:
             # TODO: Change back
             #dims=(MAX_PEOPLE,MAX_TASKS,MAX_TEST_REPS,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
-            dims=(MAX_PEOPLE,self.MAX_TASKS_TRAIN,MAX_TEST_REPS,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
+            dims=(self.MAX_PEOPLE_TRAIN,self.MAX_TASKS_TRAIN,MAX_TEST_REPS,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
             return np.prod(dims), dims
 
     def load_subject(self, subject):
@@ -133,59 +140,47 @@ class DB23(data.Dataset):
             for i in range(len(f)):
                 fc[i] = fc[i]/nyquist
         b,a = signal.butter(butterworth_order, fc, btype=btype)
-        transpose = data.T#.copy()
+        transpose = data.T
         
         for i in range(len(transpose)):
             transpose[i] = (signal.lfilter(b, a, transpose[i]))
         return transpose.T
 
-    def get_stim_rep(self, stimulus, repetition): # stimulus from 1-40, repetition from 1-6
-        global TASK_DIST
-        TASK_DIST=np.array(TASK_DIST)
-        ex=np.searchsorted(TASK_DIST.cumsum(), stimulus)
+    def remove_outliers(self, tensor, dim, low, high, factor=1):
+        for d in range(dim):
+            tensor.T[d]=np.clip(tensor.T[d], a_min=low[d], a_max=high[d])
+        return tensor
+
+    def get_stim_rep(self, stimulus, repetition):
+        # stimulus from 1-40, repetition from 1-6
+        ex=np.searchsorted(np.array(TASK_DIST).cumsum(), stimulus)
         emg, acc, glove, stim, rep = self.Es[ex]
         # emg, acc, glove, stimulus, repetition
-        stim_mask, rep_mask=(stim==stimulus), (rep==repetition) #(0 if stimulus==0 else repetition))
+        stim_mask, rep_mask=(stim==stimulus), (rep==repetition)
         mask=(stim_mask&rep_mask).squeeze()
-        if mask.sum() < TOTAL_WINDOW_SIZE:
-            print("Smaller size: %s, stimulus %s, repetition %s, %s"%(str(self.person), str(stimulus), str(repetition), str(mask.sum())))
-            # start 100 ms after it says it has started
-            time_mask=np.array([np.arange(WINDOW_MS,dtype=np.uint8)]*AMT_WINDOWS)
-            emg_=emg[mask][time_mask] * 16 # 15 ms window
-            acc_=acc[mask][time_mask] * 16
-            glove_=glove[mask][time_mask] * 16
-            emg_=emg_.reshape(-1, EMG_DIM)
-            acc_=acc_.reshape(-1, ACC_DIM)
-            glove_=glove_.reshape(-1, GLOVE_DIM)
-        else:
-            emg_=emg[mask][self.time_mask] * 16  # bit shift to avoid having too low of a number
-            acc_=acc[mask][self.time_mask] * 16
-            glove_=glove[mask][self.time_mask] * 16 # / 2**3
 
-        # filter - 5 Hz to 500 Hz
+        # TODO: check effect of removing 11th sensor
+        glove=np.concatenate((glove[:, :10], glove[:, 11:]), axis=1)
+        emg_=emg[mask][self.time_mask]
+        acc_=acc[mask][self.time_mask]
+        glove_=glove[mask][self.time_mask]
+
+        # filter - 10 Hz to 500 Hz
         emg_=self.filter(emg_, (10, 500), butterworth_order=4,btype="bandpass") # bandpass filter
-        # take out outliers
-        iqr_glove=np.subtract(*np.percentile(glove_, [75, 25], axis=0))
-        iqr_acc=np.subtract(*np.percentile(acc_, [75, 25], axis=0))
-        # take out anything below the 1 percentile or above 99 percentile
-        emg_high,emg_low=np.percentile(acc_, [99, 1], axis=0)
-
-        for dim in range(GLOVE_DIM):
-            glove_.T[dim][(glove_.T[dim]>1.5*iqr_glove[dim])] = iqr_glove[dim]
-            glove_.T[dim][(glove_.T[dim]<-1.5*iqr_glove[dim])] = -iqr_glove[dim]
-
-        for dim in range(ACC_DIM):
-            acc_.T[dim][(acc_.T[dim]>1.5*iqr_acc[dim])] = iqr_acc[dim]
-            acc_.T[dim][(acc_.T[dim]<-1.5*iqr_acc[dim])] = -iqr_acc[dim]
-
-        for dim in range(EMG_DIM):
-            emg_.T[dim][(emg_.T[dim]>emg_high[dim])] = emg_high[dim]
-            emg_.T[dim][(emg_.T[dim]<emg_low[dim])] = -emg_low[dim]
-
-        #acc_=acc_.reshape(AMT_WINDOWS, -1, ACC_DIM).mean(1) # no mean anymore so we can stride
-
         return emg_, acc_, glove_
 
+    def clip_es(self, Es):
+        Es_new = []
+        for ex in range(2):
+            emg, acc, glove, stim, rep = Es[ex]
+            eh,el=np.percentile(emg, [99, 1], axis=0)
+            ah,al=np.percentile(acc, [99, 1], axis=0)
+            gh,gl=np.percentile(glove, [99, 1], axis=0)
+            glove=self.remove_outliers(glove, GLOVE_DIM, low=gl, high=gh, factor=1)
+            acc=self.remove_outliers(acc, ACC_DIM, low=al, high=ah, factor=1)
+            emg=self.remove_outliers(emg, EMG_DIM, low=el, high=eh, factor=1)
+            Es_new.append((emg, acc, glove, stim, rep))
+        return tuple(Es_new)
 
     def load_dataset(self, norm=False):
         """
@@ -193,9 +188,8 @@ class DB23(data.Dataset):
         subject -> reps -> stim -> amt windows -> window_ms (1 frame per ms) -> dim (emg,acc,glove)
         """
         PEOPLE=PEOPLE_D2+PEOPLE_D3
-        self.time_mask=np.arange(TOTAL_WINDOW_SIZE,dtype=np.uint8)
+        self.time_mask=np.arange(10,TOTAL_WINDOW_SIZE*FACTOR+10,FACTOR,dtype=np.uint8)
         tasks_mask_train=self.task_rand[:-self.NEW_TASKS] # if (self.train or self.val) else self.task_rand
-
         self.emg_stats=RunningStats()
         self.acc_stats=RunningStats()
         self.glove_stats=RunningStats()
@@ -215,15 +209,17 @@ class DB23(data.Dataset):
                 E1=get_np(dbnum,p_dir,"1")
                 E2=get_np(dbnum,p_dir,"2")
                 self.Es = (E1, E2)
+                # clip tensors of outliers
+                self.Es=self.clip_es(self.Es)
 
                 shape=(MAX_TASKS+1,MAX_REPS,TOTAL_WINDOW_SIZE)
                 EMG=torch.empty(shape+(EMG_DIM,),device=self.device)
                 ACC=torch.empty(shape+(ACC_DIM,),device=self.device)
                 GLOVE=torch.empty(shape+(GLOVE_DIM,),device=self.device)
 
-                for rep in range(1,MAX_REPS+1):
+                for rep in range(0,MAX_REPS):
                     for stim in range(MAX_TASKS+1):
-                        emg,acc,glove=self.get_stim_rep(stim,rep)
+                        emg,acc,glove=self.get_stim_rep(stim,rep+1)
                         emg,acc,glove=torchize(emg),torchize(acc),torchize(glove)
 
                         # only add if in the training set
@@ -232,9 +228,9 @@ class DB23(data.Dataset):
                             self.acc_stats.push(acc) 
                             self.glove_stats.push(glove) 
 
-                        EMG[stim,rep-1]=emg
-                        ACC[stim,rep-1]=acc
-                        GLOVE[stim,rep-1]=glove
+                        EMG[stim,rep]=emg
+                        ACC[stim,rep]=acc
+                        GLOVE[stim,rep]=glove
 
             else:
                 # Fetch from .pt file
@@ -267,7 +263,8 @@ class DB23(data.Dataset):
 
     @property
     def PEOPLE(self):
-        return self.MAX_PEOPLE_TRAIN if (self.train or self.val) else MAX_PEOPLE
+        # TODO: Change this back
+        return self.MAX_PEOPLE_TRAIN # if (self.train or self.val) else MAX_PEOPLE
 
     @property
     def TASKS(self):
@@ -335,7 +332,6 @@ class DB23(data.Dataset):
         GLOVE=self.slice_batch(GLOVE, tasks_mask, block_mask, window_mask, GLOVE_DIM)
         ACC=self.slice_batch(ACC, tasks_mask, block_mask, window_mask, ACC_DIM)
         ACC=ACC.squeeze(1).mean(1)
-
         return (EMG,GLOVE,ACC)
 
 
@@ -346,8 +342,14 @@ def info(db):
     for train in [False, True]:
         if train:
             db.set_train()
+            e,g,a=db[0]
+            print(e.shape)
+            print(g.min(), g.max(), g.mean(), g.std())
         else:
             db.set_test()
+            e,g,a=db[0]
+            print(e.shape)
+            print(g.min(), g.max(), g.mean(), g.std())
         print("TRAIN:" if train else "TEST:")
         size,size_dims=db.size()
         print("\tDatapoints: dim (%s), size %s"%(size,size_dims))
