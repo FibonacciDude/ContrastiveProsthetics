@@ -138,7 +138,7 @@ class EMGNet(nn.Module):
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
                 # TODO: add muscle independence
-                nn.Conv2d(1,64,(5,3),padding=(2,1), bias=False),
+                nn.Conv2d(1,64,(7,3),padding=(3,1), bias=False),
                 nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
 
@@ -162,11 +162,9 @@ class EMGNet(nn.Module):
                 nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
                 # WINDOW_MS x EMG_DIM -> 1 x EMG_DIM
-                nn.AvgPool2d((WINDOW_MS, 1)),
-
                 nn.Flatten(),
 
-                nn.Linear(EMG_DIM*64, 512, bias=False),
+                nn.Linear(EMG_DIM*WINDOW_MS*64, 512, bias=False),
                 #nn.Linear(EMG_DIM*64*((WINDOW_MS-WINDOW_MS//5)//2+1), 512),
                 nn.BatchNorm1d(512, momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
@@ -175,13 +173,13 @@ class EMGNet(nn.Module):
         # No fusion for now. 
         # Reason: The classification might be affected with different activites
         # and the acceleration data shifts for different windows (relevant to static)
-        self.use_acc = False
+        self.use_acc = True # False
 
         if self.use_acc:
             self.feedforward_acc=nn.Sequential(
                     nn.BatchNorm1d(ACC_DIM,momentum=0),
                     nn.Linear(ACC_DIM, 256, bias=False),
-                    nn.BatchNorm1d(256,momentum=0,track_running_stats=False),
+                    nn.BatchNorm1d(256, momentum=0,track_running_stats=False),
                     nn.LeakyReLU(),
 
                     nn.Linear(256, 128, bias=False),
@@ -195,9 +193,9 @@ class EMGNet(nn.Module):
                     )
 
             self.fusion_head = nn.Sequential(
-                    nn.BatchNorm1d(1024+128,momentum=0,track_running_stats=False),
+                    nn.BatchNorm1d(512+128,momentum=0,track_running_stats=False),
                     nn.LeakyReLU(),
-                    nn.Linear(1024+128, 512, bias=False),
+                    nn.Linear(512+128, 512, bias=False),
                     nn.Dropout(p=.5),
 
                     nn.BatchNorm1d(512,momentum=0,track_running_stats=False),
@@ -273,7 +271,8 @@ class GLOVENet(nn.Module):
         self.to(self.device)
 
     def forward(self, GLOVE):
-        GLOVE=GLOVE.mean(dim=2, keepdim=True)
+        #GLOVE=GLOVE.mean(dim=2, keepdim=True)
+        GLOVE=GLOVE[:, :, :1]
         out=self.conv(GLOVE)
         out=self.proj_mat(out)
         return out
