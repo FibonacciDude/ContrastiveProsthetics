@@ -11,6 +11,7 @@ import numpy as np
 import tqdm
 from utils import RunningStats
 from torch.multiprocessing import Pool, Process, set_start_method
+import pyxis as px
 try:
      set_start_method('spawn')
 except RuntimeError:
@@ -31,23 +32,17 @@ def get_np(dbnum, p_dir, n):
 
 
 class DB23(data.Dataset):
-    def __init__(self, new_people=2, new_tasks=4, train=True, val=False,device="cuda"):
+    def __init__(self, train=True, val=False, device="cuda"):
         self.device=torch.device(device)
         self.train=train
         self.val=val
         self.raw=False
 
-        self.NEW_PEOPLE=new_people
-        self.NEW_TASKS=new_tasks
-        self.MAX_PEOPLE_TRAIN=MAX_PEOPLE-new_people
-        self.MAX_TASKS_TRAIN=MAX_TASKS-self.NEW_TASKS
-
         self.task_rand=torch.randperm(MAX_TASKS, device=self.device)
 
-        # DO NOT take last *new_people*
-        self.people_rand_d2=torch.randperm(MAX_PEOPLE_D2, device=self.device)
-        self.people_rand_d3=torch.randperm(MAX_PEOPLE_D3, device=self.device)
-        # Take by blocks of *2*
+        self.people_rand_train=torch.randperm(MAX_PEOPLE_TRAIN)
+        self.people_rand=torch.randperm(MAX_PEOPLE, device=self.device)
+
         _rand_perm_train=torch.randperm(MAX_TRAIN_REPS, device=self.device)
         _rand_perm_test=torch.randperm(MAX_TEST_REPS, device=self.device)
 
@@ -56,7 +51,6 @@ class DB23(data.Dataset):
         self.rep_rand_train=train_reps[_rand_perm_train[:-1]]-1
         self.rep_rand_val=train_reps[_rand_perm_train[-1:]]-1
         self.rep_rand_test=test_reps[_rand_perm_test]-1
-
 
         #self.window=torch.arange(end=WINDOW_OUTPUT_DIM, device=self.device)
         self.window=torch.randperm(WINDOW_OUTPUT_DIM, device=self.device)
@@ -69,13 +63,12 @@ class DB23(data.Dataset):
 
     def __len__(self):
         if self.train:
-            return self.MAX_PEOPLE_TRAIN*((MAX_TRAIN_REPS-1)//BLOCK_SIZE)*MAX_WINDOW_BLOCKS
+            reps = (MAX_TRAIN_REPS-1)//BLOCK_SIZE
         elif self.val:
-            return self.MAX_PEOPLE_TRAIN*1*MAX_WINDOW_BLOCKS
+            reps = 1
         else:
-            # TODO: Change back
-            return MAX_PEOPLE*(MAX_TEST_REPS//BLOCK_SIZE)*MAX_WINDOW_BLOCKS
-            #return self.MAX_PEOPLE_TRAIN*(MAX_TEST_REPS//BLOCK_SIZE)*MAX_WINDOW_BLOCKS
+            reps = MAX_TEST_REPS//BLOCK_SIZE
+        return self.PEOPLE*reps*MAX_WINDOW_BLOCKS
 
     def set_train(self):
         self.train=True
@@ -91,43 +84,37 @@ class DB23(data.Dataset):
 
     def size(self): # datapoints
         if self.train:
-            dims=(self.MAX_PEOPLE_TRAIN,self.MAX_TASKS_TRAIN,MAX_TRAIN_REPS-1,WINDOW_STRIDE, MAX_WINDOW_BLOCKS)
+            dims=(MAX_PEOPLE_TRAIN,MAX_TASKS_TRAIN+1,MAX_TRAIN_REPS-1,WINDOW_STRIDE, MAX_WINDOW_BLOCKS)
             return np.prod(dims), dims
         elif self.val:
-            dims=(self.MAX_PEOPLE_TRAIN,self.MAX_TASKS_TRAIN,1,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
+            dims=(MAX_PEOPLE_TRAIN,MAX_TASKS_TRAIN+1,1,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
             return np.prod(dims), dims
         else:
-            # TODO: Change back
-            dims=(MAX_PEOPLE,MAX_TASKS,MAX_TEST_REPS,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
-            #dims=(self.MAX_PEOPLE_TRAIN,self.MAX_TASKS_TRAIN,MAX_TEST_REPS,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
+            dims=(MAX_PEOPLE,MAX_TASKS+1,MAX_TEST_REPS,WINDOW_STRIDE,MAX_WINDOW_BLOCKS)
             return np.prod(dims), dims
 
+    def load_stored(self):
+        self.EMG=torch.load(self.path+'data/emg.pt', map_location=self.device)
+        self.ACC=torch.load(self.path+'data/acc.pt', map_location=self.device)
+        self.GLOVE=torch.load(self.path+'data/glove.pt', map_location=self.device)
+        self.EMG.cuda()
+        self.ACC.cuda()
+        self.GLOVE.cuda()
+
     def load_subject(self, subject):
-        global MAX_PEOPLE_D2
-        dbnum="3" if (subject >= MAX_PEOPLE_D2) else "2"
-        if dbnum=="3":
-            subject %= MAX_PEOPLE_D2
-        p_dir=str(subject+1)
-        #load and normalize
-        EMG=torch.load(self.path+'db%s/s%s/emg.pt'%(dbnum,p_dir), map_location=self.device)
-        ACC=torch.load(self.path+'db%s/s%s/acc.pt'%(dbnum,p_dir), map_location=self.device)
-        GLOVE=torch.load(self.path+'db%s/s%s/glove.pt'%(dbnum,p_dir), map_location=self.device)
+        EMG=self.EMG[subject]
+        ACC=self.ACC[subject]
+        GLOVE=self.GLOVE[subject]
         return EMG,ACC,GLOVE
 
-    def save_subject(self, subject, tensors):
+    def save(self, tensors):
         EMG, ACC, GLOVE = tensors
-        global MAX_PEOPLE_D2
-        dbnum="3" if (subject >= MAX_PEOPLE_D2) else "2"
-        if dbnum=="3":
-            subject %= MAX_PEOPLE_D2
-        p_dir=str(subject+1)
-        #save
-        torch.save(EMG, self.path+'db%s/s%s/emg.pt'%(dbnum,p_dir))
-        torch.save(ACC, self.path+'db%s/s%s/acc.pt'%(dbnum,p_dir))
-        torch.save(GLOVE, self.path+'db%s/s%s/glove.pt'%(dbnum,p_dir))
+        torch.save(EMG, self.path+'data/emg.pt')
+        torch.save(ACC, self.path+'data/acc.pt')
+        torch.save(GLOVE, self.path+'data/glove.pt')
 
     # credit to github user parasgulati8
-    def filter(self, data, f, butterworth_order=4,btype="lowpass"):
+    def filter(self, data, f, butterworth_order=4,btype="bandpass"):
         nyquist=Hz/2
         if isinstance(f, int):
             fc = f/nyquist
@@ -139,7 +126,8 @@ class DB23(data.Dataset):
         transpose = data.T
         
         for i in range(len(transpose)):
-            transpose[i] = (signal.lfilter(b, a, transpose[i]))
+            # TODO: see effect
+            transpose[i] = (signal.filtfilt(b, a, transpose[i]))
         return transpose.T
 
     def remove_outliers(self, tensor, dim, low, high, factor=1):
@@ -157,12 +145,15 @@ class DB23(data.Dataset):
 
         # TODO: check effect of removing 11th sensor
         glove=np.concatenate((glove[:, :10], glove[:, 11:]), axis=1)
-        emg_=emg[mask][self.time_mask]
+        emg_=emg[mask][self.time_mask] * 10**4  # move to more dense region
         acc_=acc[mask][self.time_mask]
         glove_=glove[mask][self.time_mask]
 
         # filter - 10 Hz to 500 Hz
-        #emg_=self.filter(emg_, (10, 500), butterworth_order=4,btype="bandpass") # bandpass filter
+        emg_=self.filter(emg_, (20, 500), butterworth_order=4,btype="bandpass") # bandpass filter
+        emg_=self.torchize(emg_)
+        glove_=self.torchize(glove_)
+        acc_=self.torchize(acc_)
         return emg_, acc_, glove_
 
     def clip_es(self, Es):
@@ -178,19 +169,25 @@ class DB23(data.Dataset):
             Es_new.append((emg, acc, glove, stim, rep))
         return tuple(Es_new)
 
-    def load_dataset(self, norm=False):
+    def load_dataset(self):
         """
         Loads dataset as a pt file format all preprocessed.
         subject -> reps -> stim -> amt windows -> window_ms (1 frame per ms) -> dim (emg,acc,glove)
         """
         PEOPLE=PEOPLE_D2+PEOPLE_D3
+        print("People:", PEOPLE)
         self.time_mask=np.arange(10,TOTAL_WINDOW_SIZE*FACTOR+10,FACTOR,dtype=np.uint8)
-        tasks_mask_train=self.task_rand[:-self.NEW_TASKS] # if (self.train or self.val) else self.task_rand
+        tasks_mask_train=self.task_rand[:-NEW_TASKS] # if (self.train or self.val) else self.task_rand
         self.emg_stats=RunningStats()
         self.acc_stats=RunningStats()
         self.glove_stats=RunningStats()
 
-        for person in tqdm.tqdm(PEOPLE):
+        shape=(len(PEOPLE), MAX_TASKS+1,MAX_REPS,TOTAL_WINDOW_SIZE)
+        EMG=torch.empty(shape+(EMG_DIM,), device=self.device)
+        ACC=torch.empty(shape+(ACC_DIM,), device=self.device)
+        GLOVE=torch.empty(shape+(GLOVE_DIM,), device=self.device)
+
+        for i, person in enumerate(tqdm.tqdm(PEOPLE)):
             # gestures go from 1 to 17, 1 to 23, rest (0)
             # emg, acc, glove, stimulus, repetition
             self.person=person
@@ -200,44 +197,25 @@ class DB23(data.Dataset):
                 subject %= MAX_PEOPLE_D2
             p_dir=str(subject+1)
 
-            if not norm:
-                # Fetch from .mat file
-                E1=get_np(dbnum,p_dir,"1")
-                E2=get_np(dbnum,p_dir,"2")
-                self.Es = (E1, E2)
-                # clip tensors of outliers
-                self.Es=self.clip_es(self.Es)
+            # Fetch from .mat file
+            E1=get_np(dbnum,p_dir,"1")
+            E2=get_np(dbnum,p_dir,"2")
+            self.Es = (E1, E2)
+            # clip tensors of outliers
+            self.Es=self.clip_es(self.Es)
 
-                shape=(MAX_TASKS+1,MAX_REPS,TOTAL_WINDOW_SIZE)
-                EMG=torch.empty(shape+(EMG_DIM,),device=self.device)
-                ACC=torch.empty(shape+(ACC_DIM,),device=self.device)
-                GLOVE=torch.empty(shape+(GLOVE_DIM,),device=self.device)
+            for rep in range(0,MAX_REPS):
+                for stim in range(MAX_TASKS+1):
+                    emg,acc,glove=self.get_stim_rep(stim,rep+1)
+                    # only add if in the training set
+                    if (person in TRAIN_PEOPLE and rep in self.rep_rand_train and stim in TRAIN_TASKS):
+                        self.emg_stats.push(emg) 
+                        self.acc_stats.push(acc) 
+                        self.glove_stats.push(glove) 
 
-                for rep in range(0,MAX_REPS):
-                    for stim in range(MAX_TASKS+1):
-                        emg,acc,glove=self.get_stim_rep(stim,rep+1)
-                        emg,acc,glove=self.torchize(emg),self.torchize(acc),self.torchize(glove)
-
-                        # only add if in the training set
-                        if (person in self.people_rand_d2 or person in self.people_rand_d3[:-self.NEW_PEOPLE]) and rep in self.rep_rand_train and stim in tasks_mask_train:
-                            self.emg_stats.push(emg) 
-                            self.acc_stats.push(acc) 
-                            self.glove_stats.push(glove) 
-
-                        EMG[stim,rep]=emg
-                        ACC[stim,rep]=acc
-                        GLOVE[stim,rep]=glove
-
-            else:
-                # Fetch from .pt file
-                EMG,ACC,GLOVE=self.load_subject(person)
-
-
-            if not norm:
-                EMG=EMG.reshape(EMG.shape[:-2]+(AMT_WINDOWS, WINDOW_MS, EMG_DIM))
-                GLOVE=GLOVE.reshape(GLOVE.shape[:-2]+(AMT_WINDOWS, WINDOW_MS, GLOVE_DIM))
-                #save
-                self.save_subject(person, (EMG,ACC,GLOVE))
+                    EMG[i,stim,rep]=emg
+                    ACC[i,stim,rep]=acc
+                    GLOVE[i,stim,rep]=glove
 
         emg_means,emg_std=self.emg_stats.mean_std()
         acc_means,acc_std=self.acc_stats.mean_std()
@@ -245,34 +223,30 @@ class DB23(data.Dataset):
         print(emg_std,acc_std,glove_std)
 
         # normalize
-        for person in tqdm.tqdm(PEOPLE):
-            
-            EMG,ACC,GLOVE=self.load_subject(person)
-            EMG=(EMG-emg_means)/emg_std
-            ACC=(ACC-acc_means)/acc_std
-            GLOVE=(GLOVE-glove_means)/glove_std
-            #save
-            self.save_subject(person, (EMG,ACC,GLOVE))
-
+        EMG=(EMG-emg_means)/emg_std
+        ACC=(ACC-acc_means)/acc_std
+        GLOVE=(GLOVE-glove_means)/glove_std
+        #save
+        self.save((EMG,ACC,GLOVE)) 
         print("Dataset (un)loading completed successfully")
-        return None
 
     @property
     def PEOPLE(self):
-        # TODO: Change this back
-        return self.MAX_PEOPLE_TRAIN if (self.train or self.val) else MAX_PEOPLE
+        return MAX_PEOPLE_TRAIN if (self.train or self.val) else MAX_PEOPLE 
 
     @property
     def TASKS(self):
-        # TODO: Change this back
-        return self.MAX_TASKS_TRAIN+1 if (self.train or self.val) else MAX_TASKS+1
+        return MAX_TASKS_TRAIN+1 if (self.train or self.val) else MAX_TASKS+1
 
     @property
     def tasks_mask(self):
-        tasks_mask=self.task_rand[:-self.NEW_TASKS] if (self.train or self.val) else self.task_rand
-        #tasks_mask=self.task_rand[:-self.NEW_TASKS] # if (self.train or self.val) else self.task_rand
+        tasks_mask=self.task_rand[:-NEW_TASKS] if (self.train or self.val) else self.task_rand
         tasks_mask=torch.cat((tasks_mask, self.torchize([0])))
         return tasks_mask
+
+    @property
+    def people_mask(self):
+        return self.people_rand_train if (self.train or self.val) else self.people_rand
 
     @property
     def block_mask(self):
@@ -310,20 +284,17 @@ class DB23(data.Dataset):
         # return batch of shape (2 (rep) * amtwindows * maxtask) x windowms x respective dim
         # acc dimension is just a mean
         # glove and emg are images (windowms x respective dim)
-        t = time.time()
+        # Everything is randomized. No need to shuffle dataloader.
         rep_block, subject, window_block = self.get_idx_(batch_idx)
 
         block_mask=self.block_mask[rep_block*BLOCK_SIZE:(rep_block+1)*BLOCK_SIZE]
         window_mask=self.window[window_block*WINDOW_BLOCK:(window_block+1)*WINDOW_BLOCK]
         tasks_mask=self.tasks_mask
 
-        if subject >= MAX_PEOPLE_D2:
-            subject = self.people_rand_d3[subject%MAX_PEOPLE_D2].item()
-        else:
-            subject = self.people_rand_d2[subject].item()
-
+        subject = self.people_mask[subject]
         # shape = (41, 6, window_ms, amt_windows, dim), specific case
         EMG,ACC,GLOVE=self.load_subject(subject)
+
         EMG=self.slice_batch(EMG, tasks_mask, block_mask, window_mask, EMG_DIM)
         GLOVE=self.slice_batch(GLOVE, tasks_mask, block_mask, window_mask, GLOVE_DIM)
         ACC=self.slice_batch(ACC, tasks_mask, block_mask, window_mask, ACC_DIM)
@@ -359,14 +330,19 @@ def visualize(db):
     EMG,GLOVE,ACC=db[0]
     print(EMG.shape)
     EMG=EMG.cpu().numpy()
-    for s in range(EMG_DIM):
-        print(EMG.min(), EMG.max())
-        plt.plot(EMG[0, :, s])
+    print(EMG.min(), EMG.max())
+    print(EMG.shape)
+    for sensor in range(EMG_DIM):
+        plt.plot(EMG[0, :, sensor])
     plt.show()
     
-
 if __name__=="__main__":
-    db=DB23(new_people=3,new_tasks=4, device="cpu")
+    db=DB23(device="cpu")
     #load(db)
-    info(db)
-    #visualize(db)
+    #info(db)
+    db.load_stored()
+    #t=time.time()
+    #for i in range(100):
+    #    a=db[i]
+    #print((time.time()-t)/100)
+    visualize(db)

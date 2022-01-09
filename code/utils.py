@@ -12,7 +12,11 @@ class RunningStats():
         X=X.mean(0) # along window size dimension (constant for all X)
         if self.counter==1:
             self.old_mean = self.new_mean = X
-            self.old_std = X.clone() * 0.0
+            self.np = isinstance(X, np.ndarray)
+            if self.np:
+                self.old_std = np.zeros(X.shape, dtype=X.dtype)
+            else:
+                self.old_std = torch.zeros(X.shape, device=X.device, dtype=X.dtype)
         else:
             self.new_mean=self.old_mean + (X-self.old_mean)/self.counter
             self.new_std=self.old_std+(X-self.old_mean)*(X-self.new_mean)
@@ -26,6 +30,8 @@ class RunningStats():
         return (self.new_std)/(self.counter-1)
 
     def std(self):
+        if self.np:
+            return np.sqrt(self.variance())
         return torch.sqrt(self.variance())
 
     def mean_std(self):
