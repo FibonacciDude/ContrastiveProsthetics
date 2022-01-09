@@ -1,6 +1,0 @@
-TEST:
-	Datapoints: dim (36800), size (46, 40, 2, 10)
-	Batch amts: 92
-TRAIN:
-	Datapoints: dim (63360), size (44, 36, 4, 10)
-	Batch amts: 176

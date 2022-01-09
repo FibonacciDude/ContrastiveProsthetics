@@ -10,6 +10,11 @@ import time
 import numpy as np
 import tqdm
 from utils import RunningStats
+from torch.multiprocessing import Pool, Process, set_start_method
+try:
+     set_start_method('spawn')
+except RuntimeError:
+    pass
 
 torch.manual_seed(42)
 #np.set_printoptions(precision=4, suppress=True)
@@ -25,21 +30,19 @@ def get_np(dbnum, p_dir, n):
     return emg, acc, glove, stimulus, repetition
 
 
-def torchize(X, device="cuda"):
-    if isinstance(device, str):
-        device=torch.device(device)
-    return torch.tensor(X, device=device)
-
 class DB23(data.Dataset):
     def __init__(self, new_people=2, new_tasks=4, train=True, val=False,device="cuda"):
         self.device=torch.device(device)
         self.train=train
         self.val=val
+        self.raw=False
 
         self.NEW_PEOPLE=new_people
         self.NEW_TASKS=new_tasks
         self.MAX_PEOPLE_TRAIN=MAX_PEOPLE-new_people
         self.MAX_TASKS_TRAIN=MAX_TASKS-self.NEW_TASKS
+
+        self.task_rand=torch.randperm(MAX_TASKS, device=self.device)
 
         # DO NOT take last *new_people*
         self.people_rand_d2=torch.randperm(MAX_PEOPLE_D2, device=self.device)
@@ -48,25 +51,21 @@ class DB23(data.Dataset):
         _rand_perm_train=torch.randperm(MAX_TRAIN_REPS, device=self.device)
         _rand_perm_test=torch.randperm(MAX_TEST_REPS, device=self.device)
 
-        train_reps = torchize(TRAIN_REPS, device=device)
-        test_reps = torchize(TEST_REPS, device=device)
+        train_reps = self.torchize(TRAIN_REPS)
+        test_reps = self.torchize(TEST_REPS)
         self.rep_rand_train=train_reps[_rand_perm_train[:-1]]-1
-        #self.rep_rand_val=train_reps[_rand_perm_train[-1:]]-1
-        #self.rep_rand_test=test_reps[_rand_perm_test]-1
+        self.rep_rand_val=train_reps[_rand_perm_train[-1:]]-1
+        self.rep_rand_test=test_reps[_rand_perm_test]-1
 
-        # TODO: test and remove something real quick
-        self.rep_rand_val=test_reps[_rand_perm_test[-1:]]-1
-        self.rep_rand_test=torch.cat((train_reps[_rand_perm_train[-1:]], test_reps[_rand_perm_test[:1]]))-1
-        #print(self.rep_rand_train+1, self.rep_rand_val+1, self.rep_rand_test+1)
 
-        self.task_rand=torch.randperm(MAX_TASKS, device=self.device)
-
-        # for voting later?
         #self.window=torch.arange(end=WINDOW_OUTPUT_DIM, device=self.device)
         self.window=torch.randperm(WINDOW_OUTPUT_DIM, device=self.device)
 
         self.path="/home/breezy/ULM/prosthetics/db23/"
         #self.path="../"
+
+    def torchize(self, X):
+        return torch.from_numpy(np.array(X)).to(self.device)
 
     def __len__(self):
         if self.train:
@@ -110,12 +109,9 @@ class DB23(data.Dataset):
             subject %= MAX_PEOPLE_D2
         p_dir=str(subject+1)
         #load and normalize
-        EMG=torch.load(self.path+'db%s/s%s/emg.pt'%(dbnum,p_dir))
-        ACC=torch.load(self.path+'db%s/s%s/acc.pt'%(dbnum,p_dir))
-        GLOVE=torch.load(self.path+'db%s/s%s/glove.pt'%(dbnum,p_dir))
-        EMG.to(self.device)
-        ACC.to(self.device)
-        GLOVE.to(self.device)
+        EMG=torch.load(self.path+'db%s/s%s/emg.pt'%(dbnum,p_dir), map_location=self.device)
+        ACC=torch.load(self.path+'db%s/s%s/acc.pt'%(dbnum,p_dir), map_location=self.device)
+        GLOVE=torch.load(self.path+'db%s/s%s/glove.pt'%(dbnum,p_dir), map_location=self.device)
         return EMG,ACC,GLOVE
 
     def save_subject(self, subject, tensors):
@@ -220,7 +216,7 @@ class DB23(data.Dataset):
                 for rep in range(0,MAX_REPS):
                     for stim in range(MAX_TASKS+1):
                         emg,acc,glove=self.get_stim_rep(stim,rep+1)
-                        emg,acc,glove=torchize(emg),torchize(acc),torchize(glove)
+                        emg,acc,glove=self.torchize(emg),self.torchize(acc),self.torchize(glove)
 
                         # only add if in the training set
                         if (person in self.people_rand_d2 or person in self.people_rand_d3[:-self.NEW_PEOPLE]) and rep in self.rep_rand_train and stim in tasks_mask_train:
@@ -276,7 +272,7 @@ class DB23(data.Dataset):
         #tasks_mask=self.task_rand[:-self.NEW_TASKS] if (self.train or self.val) else self.task_rand
         # TODO: remove, this. This is to test hypothesis that the new tasks are "messing up" the batch normalization
         tasks_mask=self.task_rand[:-self.NEW_TASKS] # if (self.train or self.val) else self.task_rand
-        tasks_mask=torch.cat((tasks_mask, torchize([0],device=self.device)))
+        tasks_mask=torch.cat((tasks_mask, self.torchize([0])))
         return tasks_mask
 
     @property
@@ -299,6 +295,8 @@ class DB23(data.Dataset):
     def slice_batch(self, tensor, tmask, bmask, wmask, dim):
         shape=(BLOCK_SIZE*self.TASKS, TOTAL_WINDOW_SIZE, dim)
         tensor=tensor[tmask, bmask].reshape(shape)
+        if self.raw:
+            return tensor
         # stride across the entire window (moving window of window_ms size)
         stride=(TOTAL_WINDOW_SIZE*dim, WINDOW_STRIDE, dim, 1)
         tensor=torch.as_strided(tensor, (shape[0], WINDOW_OUTPUT_DIM, WINDOW_MS, dim), stride)
@@ -313,7 +311,7 @@ class DB23(data.Dataset):
         # return batch of shape (2 (rep) * amtwindows * maxtask) x windowms x respective dim
         # acc dimension is just a mean
         # glove and emg are images (windowms x respective dim)
-
+        t = time.time()
         rep_block, subject, window_block = self.get_idx_(batch_idx)
 
         block_mask=self.block_mask[rep_block*BLOCK_SIZE:(rep_block+1)*BLOCK_SIZE]
@@ -327,7 +325,6 @@ class DB23(data.Dataset):
 
         # shape = (41, 6, window_ms, amt_windows, dim), specific case
         EMG,ACC,GLOVE=self.load_subject(subject)
-
         EMG=self.slice_batch(EMG, tasks_mask, block_mask, window_mask, EMG_DIM)
         GLOVE=self.slice_batch(GLOVE, tasks_mask, block_mask, window_mask, GLOVE_DIM)
         ACC=self.slice_batch(ACC, tasks_mask, block_mask, window_mask, ACC_DIM)
@@ -339,6 +336,7 @@ def load(db):
     db.load_dataset()
 
 def info(db):
+    print("New tasks", db.task_rand[-db.NEW_TASKS:].cpu().numpy())
     for train in [False, True]:
         if train:
             db.set_train()
@@ -356,7 +354,19 @@ def info(db):
         batch=len(db)
         print("\tBatch amts: %s"%(batch))
         
+def visualize(db):
+    import matplotlib.pyplot as plt
+    db.raw=True
+    EMG,GLOVE,ACC=db[0]
+    print(EMG.shape)
+    EMG=EMG.cpu().numpy()
+    print(EMG.min(), EMG.max())
+    plt.plot(EMG[0, :, 1])
+    plt.show()
+    
+
 if __name__=="__main__":
-    db=DB23(new_people=3,new_tasks=4)
-    load(db)
+    db=DB23(new_people=3,new_tasks=4, device="cpu")
+    #load(db)
     #info(db)
+    visualize(db)

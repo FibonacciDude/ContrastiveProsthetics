@@ -37,4 +37,5 @@ GLOVE_DIM=22 - 1    # take out 11th sensor (going crazy)
 EMG_DIM=12
 ACC_DIM=EMG_DIM*3
 
-NUM_WORKERS=0
+PREFETCH=2
+NUM_WORKERS=2
