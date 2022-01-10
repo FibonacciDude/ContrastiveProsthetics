@@ -127,6 +127,12 @@ class EMGNet(nn.Module):
         self.device=torch.device(device)
         self.d_e=d_e
 
+        # No fusion for now. 
+        # Reason: The classification might be affected with different activites
+        # and the acceleration data shifts for different windows (relevant to static)
+        self.use_acc = False
+
+
         # momentum = 0 and batch per subject in order to have adaptive normalization (https://doi.org/10.1016/j.patcog.2018.03.005)
 
         # similar architecture to https://doi.org/10.3390/s17030458
@@ -137,69 +143,58 @@ class EMGNet(nn.Module):
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
-                # TODO: add muscle independence
-                nn.Conv2d(1,64,(7,3),padding=(3,1), bias=False),
-                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
+                nn.Conv2d(1,64,(1,EMG_DIM),padding=(0,0), bias=False),
                 nn.LeakyReLU(),
+                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
 
                 # smaller kernel
-                nn.Conv2d(64,64,(3,3),padding=(1,1), bias=False),
-                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
+                nn.Conv2d(64,64,(3,1),padding=(1,0), bias=False),
                 nn.LeakyReLU(),
+                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
+                nn.Dropout(.5),
 
                 nn.Conv2d(64,64,(1,1), bias=False),
-                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
-                nn.Dropout(p=.5),
-
-                # one more layer (why not?, it acts like a bottleneck)
-                nn.Conv2d(64,64,(3,3),padding=(1,1)),
                 nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
-                nn.LeakyReLU(),
-                nn.Dropout(p=.5),
-
+                nn.Dropout(.5),
+                
                 nn.Conv2d(64,64,(1,1), bias=False),
-                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.LeakyReLU(),
-                # WINDOW_MS x EMG_DIM -> 1 x EMG_DIM
+                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.Flatten(),
+                nn.Dropout(.5),
 
-                nn.Linear(EMG_DIM*WINDOW_MS*64, 512, bias=False),
-                #nn.Linear(EMG_DIM*64*((WINDOW_MS-WINDOW_MS//5)//2+1), 512),
-                nn.BatchNorm1d(512, momentum=0,track_running_stats=False),
+                nn.Linear(WINDOW_MS*64, 512, bias=False),
                 nn.LeakyReLU(),
+                nn.BatchNorm1d(512, momentum=0,track_running_stats=False),
                 )
-
-        # No fusion for now. 
-        # Reason: The classification might be affected with different activites
-        # and the acceleration data shifts for different windows (relevant to static)
-        self.use_acc = True # False
 
         if self.use_acc:
             self.feedforward_acc=nn.Sequential(
                     nn.BatchNorm1d(ACC_DIM,momentum=0),
                     nn.Linear(ACC_DIM, 256, bias=False),
-                    nn.BatchNorm1d(256, momentum=0,track_running_stats=False),
                     nn.LeakyReLU(),
+                    nn.BatchNorm1d(256, momentum=0,track_running_stats=False),
 
                     nn.Linear(256, 128, bias=False),
-                    nn.BatchNorm1d(128,momentum=0,track_running_stats=False),
                     nn.LeakyReLU(),
-                    nn.Dropout(),
+                    nn.BatchNorm1d(128,momentum=0,track_running_stats=False),
+                    nn.Dropout(.5),
 
                     nn.Linear(128, 128, bias=False),
-                    nn.BatchNorm1d(128,momentum=0,track_running_stats=False),
                     nn.LeakyReLU(),
+                    nn.BatchNorm1d(128,momentum=0,track_running_stats=False),
+                    nn.Dropout(.5), #D
                     )
 
             self.fusion_head = nn.Sequential(
-                    nn.BatchNorm1d(512+128,momentum=0,track_running_stats=False),
                     nn.LeakyReLU(),
+                    nn.BatchNorm1d(512+128,momentum=0,track_running_stats=False),
                     nn.Linear(512+128, 512, bias=False),
                     nn.Dropout(p=.5),
 
-                    nn.BatchNorm1d(512,momentum=0,track_running_stats=False),
                     nn.LeakyReLU(),
+                    nn.BatchNorm1d(512,momentum=0,track_running_stats=False),
                     )
 
         self.proj_mat = nn.Linear(512, self.d_e, bias=False)
@@ -244,26 +239,21 @@ class GLOVENet(nn.Module):
         self.conv=nn.Sequential(
                 nn.BatchNorm2d(1,momentum=0,track_running_stats=False),
                 # Initial glove features
-                nn.Conv2d(1,512,(1, GLOVE_DIM),padding=(0,0), bias=False),
+                nn.Conv2d(1,512//2,(1, GLOVE_DIM),padding=(0,0), bias=False),
                 # 3 (in the 15 ms case) x 1 
                 #nn.BatchNorm2d(512,momentum=.1),
-                nn.BatchNorm2d(512, momentum=0, track_running_stats=False),
                 nn.LeakyReLU(),
+                nn.BatchNorm2d(512//2, momentum=0, track_running_stats=False),
                 nn.Flatten(),
 
-                nn.Linear(512, 512, bias=False),
-                nn.BatchNorm1d(512, momentum=0, track_running_stats=False),
+                nn.Linear(512//2, 512//2, bias=False),
                 nn.LeakyReLU(),
+                nn.BatchNorm1d(512//2, momentum=0, track_running_stats=False),
                 nn.Dropout(p=.5),
                 
-                nn.Linear(512, 512, bias=False),
-                nn.BatchNorm1d(512, momentum=0, track_running_stats=False),
+                nn.Linear(512//2, 512//2, bias=False),
                 nn.LeakyReLU(),
-                nn.Dropout(p=.5),
-
-                nn.Linear(512, 512//2, bias=False),
                 nn.BatchNorm1d(512//2, momentum=0, track_running_stats=False),
-                nn.LeakyReLU(),
                 )
 
         self.proj_mat = nn.Linear(512//2, self.d_e, bias=False)
