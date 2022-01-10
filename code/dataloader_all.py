@@ -143,7 +143,8 @@ class DB23(data.Dataset):
         stim_mask, rep_mask=(stim==stimulus), (rep==repetition)
         mask=(stim_mask&rep_mask).squeeze()
 
-        # TODO: check effect of removing 11th sensor
+        # TODO: check effect of removing 11th sensor 
+        # (this was removed in https://www.nature.com/articles/s41597-019-0349-2 for noise problems as well)
         glove=np.concatenate((glove[:, :10], glove[:, 11:]), axis=1)
         emg_=emg[mask][self.time_mask] * 10**4  # move to more dense region
         acc_=acc[mask][self.time_mask]
@@ -306,7 +307,7 @@ def load(db):
     db.load_dataset()
 
 def info(db):
-    print("New tasks", db.task_rand[-db.NEW_TASKS:].cpu().numpy())
+    print("New tasks", db.task_rand[-NEW_TASKS:].cpu().numpy())
     for train in [False, True]:
         if train:
             db.set_train()
@@ -328,21 +329,21 @@ def visualize(db):
     import matplotlib.pyplot as plt
     db.raw=True
     EMG,GLOVE,ACC=db[0]
-    print(EMG.shape)
-    EMG=EMG.cpu().numpy()
-    print(EMG.min(), EMG.max())
-    print(EMG.shape)
-    for sensor in range(EMG_DIM):
-        plt.plot(EMG[0, :, sensor])
+    #EMG=EMG.cpu().numpy()
+    #for sensor in range(EMG_DIM):
+    #    plt.plot(EMG[0, :, sensor])
+    GLOVE=GLOVE.cpu().numpy()
+    for sensor in range(GLOVE_DIM):
+        plt.plot(GLOVE[10, :, sensor])
     plt.show()
     
 if __name__=="__main__":
     db=DB23(device="cpu")
     #load(db)
-    #info(db)
     db.load_stored()
+    info(db)
     #t=time.time()
     #for i in range(100):
     #    a=db[i]
     #print((time.time()-t)/100)
-    visualize(db)
+    #visualize(db)
