@@ -235,11 +235,11 @@ def main():
     dataset23 = DB23(device="cuda")
     dataset23.load_stored()
 
-    lrs = 10**np.random.uniform(low=-5, high=-1, size=(120,))
-    regs = 10**np.random.uniform(low=-6, high=-1, size=(100,))
+    lrs = 10**np.random.uniform(low=-6, high=0, size=(360,))
+    regs = 10**np.random.uniform(low=-7, high=0, size=(340,))
     regs = list(regs) + [0.0]*20
     des=[128]
-    epochs=4
+    epochs=6
     load=False
     values, keys = cross_validate(lrs, regs, des, dataset23, epochs=epochs, save=True, load=load)
 
@@ -252,7 +252,7 @@ def main():
     # test model
     d_e, lr, reg = best_key     # best model during validation
 
-    final_epochs=200
+    final_epochs=1000
     checkpoint=True
     verbose=True
     params = {
