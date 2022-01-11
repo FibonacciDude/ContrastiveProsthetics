@@ -143,12 +143,12 @@ class EMGNet(nn.Module):
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
-                nn.Conv2d(1,64,(1,EMG_DIM),padding=(0,0), bias=False),
+                nn.Conv2d(1,32,(3,EMG_DIM),padding=(1,0), bias=False),
                 nn.LeakyReLU(),
-                nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
+                nn.BatchNorm2d(32,momentum=0,track_running_stats=False),
 
                 # smaller kernel
-                nn.Conv2d(64,64,(3,1),padding=(1,0), bias=False),
+                nn.Conv2d(32,64,(3,1),padding=(1,0), bias=False),
                 nn.LeakyReLU(),
                 nn.BatchNorm2d(64,momentum=0,track_running_stats=False),
                 nn.Dropout(.5),

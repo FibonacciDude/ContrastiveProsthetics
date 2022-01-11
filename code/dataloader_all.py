@@ -52,8 +52,7 @@ class DB23(data.Dataset):
         self.rep_rand_val=train_reps[_rand_perm_train[-1:]]-1
         self.rep_rand_test=test_reps[_rand_perm_test]-1
 
-        #self.window=torch.arange(end=WINDOW_OUTPUT_DIM, device=self.device)
-        self.window=torch.randperm(WINDOW_OUTPUT_DIM, device=self.device)
+        self.window=torch.randperm(WINDOW_OUTPUT_DIM-1, device=self.device)
 
         self.path="/home/breezy/ULM/prosthetics/db23/"
         #self.path="../"
@@ -271,9 +270,10 @@ class DB23(data.Dataset):
         tensor=tensor[tmask, bmask].reshape(shape)
         if self.raw:
             return tensor
-        # stride across the entire window (moving window of window_ms size)
-        stride=(TOTAL_WINDOW_SIZE*dim, WINDOW_STRIDE, dim, 1)
-        tensor=torch.as_strided(tensor, (shape[0], WINDOW_OUTPUT_DIM, WINDOW_MS, dim), stride)
+        stride = (TOTAL_WINDOW_SIZE*dim, WINDOW_STRIDE*dim, dim, 1)
+        # ahh, subtle. The last output value would not be complete as STRIDE < WINDOW_MS
+        # so it can only be WINDOW_MS size
+        tensor=torch.as_strided(tensor, (shape[0], WINDOW_OUTPUT_DIM-1, WINDOW_MS, dim), stride)
         # take random sample from this window
         # shape (TASKS*BLOCK_SIZE,WINDOW_BLOCK,WINDOW_MS,DIM)
         # (TASKS*BLOCK_SIZE*WINDOW_BLOCK,WINDOW_MS,DIM)
