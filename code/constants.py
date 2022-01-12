@@ -39,7 +39,7 @@ MAX_REPS=len(REPS)
 BLOCK_SIZE=1    # 2 might be too large of a batch size
 Hz=2000
 FACTOR=Hz//1000
-Hz_glove=25 # much, much lower
+Hz_glove=25     # much, much lower
 MS_GLOVE_SWITCH=(1/Hz_glove)*1000   # in ms
 # In ms*1000/Hz
 TOTAL_WINDOW_SIZE=800  # we could do more data, in ms
@@ -48,9 +48,11 @@ WINDOW_MS=20
 assert MS_GLOVE_SWITCH%WINDOW_MS==0
 WINDOW_STRIDE=10
 WINDOW_OUTPUT_DIM=TOTAL_WINDOW_SIZE//WINDOW_STRIDE
-WINDOW_BLOCK=20  # was 20 before
+WINDOW_BLOCK=20
+#WINDOW_BLOCK=40
 assert WINDOW_OUTPUT_DIM%WINDOW_BLOCK==0
-MAX_WINDOW_BLOCKS=WINDOW_OUTPUT_DIM//WINDOW_BLOCK
+MAX_WINDOW_BLOCKS=WINDOW_OUTPUT_DIM//WINDOW_BLOCK-1 # non-complete stride
+
 assert TOTAL_WINDOW_SIZE%WINDOW_OUTPUT_DIM==0
 assert TOTAL_WINDOW_SIZE%WINDOW_MS == 0, "Window ms does not fit into total window length"
 AMT_WINDOWS=TOTAL_WINDOW_SIZE//WINDOW_MS

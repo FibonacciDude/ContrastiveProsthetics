@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 
 torch.manual_seed(42)
 torch.backends.cudnn.benchmark=True
+shuff=True
 
 def test(model, dataset):
     dataset.set_test()
@@ -20,7 +21,7 @@ def test(model, dataset):
     model.eval()
 
     idx_test = torch.randperm(len(dataset))
-    loader=data.DataLoader(dataset, shuffle=True, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
+    loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
     print("Test size:", len(dataset))
 
     total_tasks=dataset.TASKS
@@ -72,7 +73,7 @@ def validate(model, dataset):
     total=0
     #print("Validation size:", len(dataset))
     idx_val = torch.randperm(len(dataset))
-    loader=data.DataLoader(dataset, shuffle=True, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
+    loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
 
     for EMG,GLOVE,ACC in loader:
         EMG=EMG.to(torch.float32).squeeze(0)
@@ -103,6 +104,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500, eta_min=0,verbose=True)
     else:
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10**4 ,gamma=1, verbose=True)
+
     #scheduler = optim.lr_scheduler.OneCycleLR(optimizer, total_steps=len(dataset)*params['epochs'], max_lr=params['lr'], div_factor=3, final_div_factor=3, verbose=False) # super-convergence scheduler
     #scheduler = optim.lr_scheduler.CyclicLR(optimizer,base_lr=0, max_lr=2e-1, step_size_up=params['epochs']*len(dataset), step_size_down=0, verbose=False, cycle_momentum=False)
 
@@ -113,7 +115,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     total_tasks = dataset.TASKS
     idx_train = torch.randperm(len(dataset))
 
-    loader=data.DataLoader(dataset, shuffle=True, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
+    loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
 
     val_losses={}
     counter=0
@@ -235,8 +237,8 @@ def main():
     dataset23 = DB23(device="cuda")
     dataset23.load_stored()
 
-    lrs = 10**np.random.uniform(low=-6, high=0, size=(360,))
-    regs = 10**np.random.uniform(low=-7, high=0, size=(340,))
+    lrs = 10**np.random.uniform(low=-6, high=0, size=(360-150,))
+    regs = 10**np.random.uniform(low=-7, high=0, size=(340-150,))
     regs = list(regs) + [0.0]*20
     des=[128]
     epochs=6
@@ -252,7 +254,7 @@ def main():
     # test model
     d_e, lr, reg = best_key     # best model during validation
 
-    final_epochs=1000
+    final_epochs=150
     checkpoint=True
     verbose=True
     params = {
@@ -262,7 +264,7 @@ def main():
             'l2' : reg
             }
     print("Final training of model")
-    final_vals, model = train_loop(dataset23, params, checkpoint=checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_v4", verbose=verbose)
+    final_vals, model = train_loop(dataset23, params, checkpoint=checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_v5", verbose=verbose)
     print("Final validation model statistics")
     print(final_vals)
 
