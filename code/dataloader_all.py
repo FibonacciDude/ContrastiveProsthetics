@@ -38,9 +38,12 @@ class DB23(data.Dataset):
         self.val=val
         self.raw=False
 
-        self.task_rand=torch.randperm(MAX_TASKS, device=self.device)
+        # if you randomize the tasks, you should randomize the 
+        # labels...
+        self.tasks_train=self.torchize(TRAIN_TASKS)
+        self.tasks_test=self.torchize(TEST_TASKS)
 
-        self.people_rand_train=torch.randperm(MAX_PEOPLE_TRAIN)
+        self.people_rand_train=torch.randperm(MAX_PEOPLE_TRAIN, device=self.device)
         self.people_rand=torch.randperm(MAX_PEOPLE, device=self.device)
 
         _rand_perm_train=torch.randperm(MAX_TRAIN_REPS, device=self.device)
@@ -52,22 +55,13 @@ class DB23(data.Dataset):
         self.rep_rand_val=train_reps[_rand_perm_train[-1:]]-1
         self.rep_rand_test=test_reps[_rand_perm_test]-1
 
-        self.window=torch.randperm(WINDOW_OUTPUT_DIM-1, device=self.device)
+        self.window_mask=torch.randperm(WINDOW_OUTPUT_DIM-1, device=self.device)
 
         self.path="/home/breezy/ULM/prosthetics/db23/"
         #self.path="../"
 
     def torchize(self, X):
         return torch.from_numpy(np.array(X)).to(self.device)
-
-    def __len__(self):
-        if self.train:
-            reps = (MAX_TRAIN_REPS-1)//BLOCK_SIZE
-        elif self.val:
-            reps = 1
-        else:
-            reps = MAX_TEST_REPS//BLOCK_SIZE
-        return self.PEOPLE*reps*MAX_WINDOW_BLOCKS
 
     def set_train(self):
         self.train=True
@@ -80,6 +74,16 @@ class DB23(data.Dataset):
     def set_val(self):
         self.train=False
         self.val=True
+
+
+    def __len__(self):
+        if self.train:
+            reps = (MAX_TRAIN_REPS-1)//BLOCK_SIZE
+        elif self.val:
+            reps = 1
+        else:
+            reps = MAX_TEST_REPS//BLOCK_SIZE
+        return self.PEOPLE*reps*MAX_WINDOW_BLOCKS
 
     def size(self): # datapoints
         if self.train:
@@ -177,7 +181,6 @@ class DB23(data.Dataset):
         PEOPLE=PEOPLE_D2+PEOPLE_D3
         print("People:", PEOPLE)
         self.time_mask=np.arange(10,TOTAL_WINDOW_SIZE*FACTOR+10,FACTOR,dtype=np.uint8)
-        tasks_mask_train=self.task_rand[:-NEW_TASKS] # if (self.train or self.val) else self.task_rand
         self.emg_stats=RunningStats()
         self.acc_stats=RunningStats()
         self.glove_stats=RunningStats()
@@ -240,7 +243,7 @@ class DB23(data.Dataset):
 
     @property
     def tasks_mask(self):
-        tasks_mask=self.task_rand[:-NEW_TASKS] if (self.train or self.val) else self.task_rand
+        tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks_test
         tasks_mask=torch.cat((tasks_mask, self.torchize([0])))
         return tasks_mask
 
@@ -273,33 +276,35 @@ class DB23(data.Dataset):
         stride = (TOTAL_WINDOW_SIZE*dim, WINDOW_STRIDE*dim, dim, 1)
         # ahh, subtle. The last output value would not be complete as STRIDE < WINDOW_MS
         # so it can only be WINDOW_MS size
-        tensor=torch.as_strided(tensor, (shape[0], WINDOW_OUTPUT_DIM-1, WINDOW_MS, dim), stride)
+        tensor=torch.as_strided(tensor, (BLOCK_SIZE*self.TASKS, WINDOW_OUTPUT_DIM-1, WINDOW_MS, dim), stride)
         # take random sample from this window
         # shape (TASKS*BLOCK_SIZE,WINDOW_BLOCK,WINDOW_MS,DIM)
         # (TASKS*BLOCK_SIZE*WINDOW_BLOCK,WINDOW_MS,DIM)
+        #print(tensor[:, wmask].shape, self.train and not self.val)
         return tensor[:, wmask].reshape(-1, 1, WINDOW_MS, dim)
 
 
     def __getitem__(self, batch_idx):
         # batch_idx -> rep_block x (subject x window_block)
-        # return batch of shape (2 (rep) * amtwindows * maxtask) x windowms x respective dim
+        # return batch of shape ( rep * amtwindows * maxtask) x windowms x respective dim
         # acc dimension is just a mean
         # glove and emg are images (windowms x respective dim)
         # Everything is randomized. No need to shuffle dataloader.
         rep_block, subject, window_block = self.get_idx_(batch_idx)
 
         block_mask=self.block_mask[rep_block*BLOCK_SIZE:(rep_block+1)*BLOCK_SIZE]
-        window_mask=self.window[window_block*WINDOW_BLOCK:(window_block+1)*WINDOW_BLOCK]
+        window_mask=self.window_mask[window_block*WINDOW_BLOCK:(window_block+1)*WINDOW_BLOCK]
         tasks_mask=self.tasks_mask
 
         subject = self.people_mask[subject]
         # shape = (41, 6, window_ms, amt_windows, dim), specific case
         EMG,ACC,GLOVE=self.load_subject(subject)
-
+    
         EMG=self.slice_batch(EMG, tasks_mask, block_mask, window_mask, EMG_DIM)
         GLOVE=self.slice_batch(GLOVE, tasks_mask, block_mask, window_mask, GLOVE_DIM)
         ACC=self.slice_batch(ACC, tasks_mask, block_mask, window_mask, ACC_DIM)
         ACC=ACC.squeeze(1).mean(1)
+        #print(EMG.shape)
         return (EMG,GLOVE,ACC)
 
 
