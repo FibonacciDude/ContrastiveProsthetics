@@ -42,9 +42,11 @@ class DB23(data.Dataset):
         # labels...
         self.tasks_train=self.torchize(TRAIN_TASKS)
         self.tasks_test=self.torchize(TEST_TASKS)
+        self.tasks=self.torchize(TASKS)
 
-        self.people_rand_train=torch.randperm(MAX_PEOPLE_TRAIN, device=self.device)
+        self.people_rand_train=self.torchize(TRAIN_PEOPLE)[torch.randperm(MAX_PEOPLE_TRAIN, device=self.device)]
         self.people_rand=torch.randperm(MAX_PEOPLE, device=self.device)
+        self.people = self.torchize(PEOPLE)
 
         _rand_perm_train=torch.randperm(MAX_TRAIN_REPS, device=self.device)
         _rand_perm_test=torch.randperm(MAX_TEST_REPS, device=self.device)
@@ -154,7 +156,8 @@ class DB23(data.Dataset):
         glove_=glove[mask][self.time_mask]
 
         # filter - 10 Hz to 500 Hz
-        emg_=self.filter(emg_, (20, 500), butterworth_order=4,btype="bandpass") # bandpass filter
+        #emg_=self.filter(emg_, (20, 500), butterworth_order=4,btype="bandpass") # bandpass filter
+        emg_=self.filter(emg_, (5, 500), butterworth_order=4,btype="bandpass") # bandpass filter
         emg_=self.torchize(emg_)
         glove_=self.torchize(glove_)
         acc_=self.torchize(acc_)
@@ -178,9 +181,9 @@ class DB23(data.Dataset):
         Loads dataset as a pt file format all preprocessed.
         subject -> reps -> stim -> amt windows -> window_ms (1 frame per ms) -> dim (emg,acc,glove)
         """
-        PEOPLE=PEOPLE_D2+PEOPLE_D3
+        global PEOPLE
         print("People:", PEOPLE)
-        self.time_mask=np.arange(10,TOTAL_WINDOW_SIZE*FACTOR+10,FACTOR,dtype=np.uint8)
+        self.time_mask=np.arange(10,TOTAL_WINDOW_SIZE+10,dtype=np.uint8)
         self.emg_stats=RunningStats()
         self.acc_stats=RunningStats()
         self.glove_stats=RunningStats()
@@ -243,7 +246,7 @@ class DB23(data.Dataset):
 
     @property
     def tasks_mask(self):
-        tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks_test
+        tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
         tasks_mask=torch.cat((tasks_mask, self.torchize([0])))
         return tasks_mask
 
@@ -270,9 +273,9 @@ class DB23(data.Dataset):
 
     def slice_batch(self, tensor, tmask, bmask, wmask, dim):
         shape=(BLOCK_SIZE*self.TASKS, TOTAL_WINDOW_SIZE, dim)
-        tensor=tensor[tmask, bmask].reshape(shape)
         if self.raw:
-            return tensor
+            return tensor[tmask]
+        tensor=tensor[tmask, bmask].reshape(shape)
         stride = (TOTAL_WINDOW_SIZE*dim, WINDOW_STRIDE*dim, dim, 1)
         # ahh, subtle. The last output value would not be complete as STRIDE < WINDOW_MS
         # so it can only be WINDOW_MS size
@@ -296,7 +299,11 @@ class DB23(data.Dataset):
         window_mask=self.window_mask[window_block*WINDOW_BLOCK:(window_block+1)*WINDOW_BLOCK]
         tasks_mask=self.tasks_mask
 
+        # from people mask
         subject = self.people_mask[subject]
+        # from the actual big tensor
+        subject = (self.people == subject).nonzero(as_tuple=False).item()
+
         # shape = (41, 6, window_ms, amt_windows, dim), specific case
         EMG,ACC,GLOVE=self.load_subject(subject)
     
@@ -304,7 +311,6 @@ class DB23(data.Dataset):
         GLOVE=self.slice_batch(GLOVE, tasks_mask, block_mask, window_mask, GLOVE_DIM)
         ACC=self.slice_batch(ACC, tasks_mask, block_mask, window_mask, ACC_DIM)
         ACC=ACC.squeeze(1).mean(1)
-        #print(EMG.shape)
         return (EMG,GLOVE,ACC)
 
 
@@ -312,7 +318,7 @@ def load(db):
     db.load_dataset()
 
 def info(db):
-    print("New tasks", db.task_rand[-NEW_TASKS:].cpu().numpy())
+    print("New tasks", db.tasks_test.cpu().numpy())
     for train in [False, True]:
         if train:
             db.set_train()
@@ -332,19 +338,18 @@ def info(db):
         
 def visualize(db):
     import matplotlib.pyplot as plt
-    db.raw=True
+    #db.raw=True
+    db.set_train()
     EMG,GLOVE,ACC=db[0]
-    #EMG=EMG.cpu().numpy()
-    #for sensor in range(EMG_DIM):
-    #    plt.plot(EMG[0, :, sensor])
-    GLOVE=GLOVE.cpu().numpy()
-    for sensor in range(GLOVE_DIM):
-        plt.plot(GLOVE[10, :, sensor])
+    dat=EMG.cpu().numpy()
+    dim=EMG_DIM
+    for sensor in range(dim):
+        plt.plot(dat.squeeze(1)[14, :, sensor])
     plt.show()
     
 if __name__=="__main__":
     db=DB23(device="cpu")
-    #load(db)
+    load(db)
     db.load_stored()
     info(db)
     #t=time.time()

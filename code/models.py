@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from constants import *
 from utils import RunningStats
@@ -25,6 +26,34 @@ class AdaBatchNorm2d(nn.Module):
     def forward(self, X):
         return self.bn(X)
 
+class Print(nn.Module):
+    def __init__(self):
+        super(Print, self).__init__()
+    
+    def forward(self, X):
+        print(X.shape)
+        return X
+
+class LocalLinear(nn.Module):
+    def __init__(self,in_features,local_features,kernel_size,padding=0,stride=1,bias=True):
+        super(LocalLinear, self).__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+
+        fold_num = (in_features+2*padding-self.kernel_size)//self.stride+1
+        self.weight = nn.Parameter(torch.randn(fold_num,kernel_size,local_features))
+        self.bias = nn.Parameter(torch.randn(fold_num,local_features)) if bias else None
+
+    def forward(self, x:torch.Tensor):
+        x = F.pad(x,[self.padding]*2,value=0)
+        x = x.unfold(-1,size=self.kernel_size,step=self.stride)
+        x = torch.matmul(x.unsqueeze(2),self.weight).squeeze(2)
+        if self.bias is not None:
+            x = x + self.bias
+        return x
+
+
 # modeled after https://github.com/openai/CLIP/blob/main/clip/model.py
 class Model(nn.Module):
     def __init__(self, d_e, train_model=True, device="cuda"):
@@ -37,6 +66,8 @@ class Model(nn.Module):
         self.glove_net = GLOVENet(d_e=d_e) # glove model
         self.loss_f = torch.nn.functional.cross_entropy
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1)/0.07)    # CLIP logit scale
+        self.correct_tr = []
+        self.correct_v = []
         self.to(self.device)
 
     def set_train(self):
@@ -52,46 +83,60 @@ class Model(nn.Module):
         emg_features = self.emg_net(EMG, ACC)
         return emg_features
 
-    def encode_glove(self, GLOVE):
-        glove_features = self.glove_net(GLOVE)
+    def encode_glove(self, GLOVE, tasks):
+        glove_features = self.glove_net(GLOVE, tasks)
         return glove_features
 
-    def forward(self, EMG, ACC, GLOVE, EMG_T, GLOVE_T):
+    def forward(self, EMG, ACC, GLOVE, tasks):
+        T=len(tasks)
 
         emg_features = self.encode_emg(EMG, ACC)
-        glove_features = self.encode_glove(GLOVE)
+        glove_features = self.encode_glove(GLOVE, tasks)
         emg_features = emg_features / emg_features.norm(dim=-1,keepdim=True)
         glove_features = glove_features / glove_features.norm(dim=-1,keepdim=True)
-        #print(emg_features.norm(dim=1,keepdim=True).shape)
-        #print(emg_features.shape, glove_features.shape)
-        emg_features = emg_features.reshape((EMG_T,-1,self.d_e)).permute((1,0,2))
-        glove_features = glove_features.reshape((GLOVE_T,-1,self.d_e)).permute((1,0,2))
-        
-        #                        -> N_e x N_g
-        # encoders give input as (TASKS*WINDOW_BLOCK, d_e) or another N
-        # we want (-1, TASKS, d_e) and take cross entropy across entire (-1) dim
 
-        logit_scale=self.logit_scale.exp().clamp(min=1e-8,max=100)
-        #print(emg_features.shape)
-        logits = torch.matmul(emg_features, glove_features.permute(0,2,1)) # shape = (N,TASKS_e,TASKS_g)
+        #emg_features = emg_features.reshape((T,-1,self.d_e)).permute((1,0,2))
+        #glove_features = glove_features.reshape((T, -1,self.d_e)).permute((1,0,2))
 
+        #logit_scale=self.logit_scale.exp().clamp(min=1e-8,max=100)
+        #logits = torch.bmm(emg_features, glove_features.transpose(1,2))
+
+        n = emg_features.shape[0]//len(tasks)
+
+        arange=torch.arange(T, dtype=torch.long, device=self.device).unsqueeze(1)
+        label=arange.expand(-1, n).reshape(-1).to(torch.long)
+        loss = self.loss_f(emg_features, label)
+
+        correct = (F.softmax(emg_features, dim=-1).argmax(-1)==label).sum()/emg_features.shape[0]
         if self.train_model:
-            loss= self.loss(logits * logit_scale)
-            logits = logits * logit_scale
-            return loss, logits
-        return logits
+            self.correct_v = []
+            self.correct_tr.append(correct.item())
+        else:
+            self.correct_tr = []
+            self.correct_v.append(correct.item())
+        return loss
+
+            #loss= self.loss(logits * logit_scale)
+            #logits = logits * logit_scale
+            #return loss, logits
+        #return logits 
 
     def loss(self, logits):
         # matrix should be symmetric
         N,tasks,tasks=logits.shape  # e x g
         labels = self.get_labels(N,tasks)
-        #print(logits.shape)
-        #print(labels)
-        #print(logits.shape)
+
+        loss = 0
+        lb = self.get_labels(1,tasks)
+        for i in range(N):
+            log=logits[i]
+            loss+=(self.loss_f(log, lb) + self.loss_f(log.t(), lb))/2
+        #print(loss/N)
+        return loss / N
+
         # convert (N_e, N_g) -> (n,task_e,N_g) -> (n,task_e,n,task_g) -> (n,n,task_g,task_e) -> (n^2,task_g,task_e)
-        #print(logits.shape)
         logits_e = logits.reshape((N*tasks,tasks))
-        logits_g = logits.permute((0,2,1)).reshape((N*tasks,tasks))
+        logits_g = logits.transpose(1,2).reshape((N*tasks,tasks))
         loss_e = self.loss_f(logits_e, labels, reduction='mean')
         loss_g = self.loss_f(logits_g, labels, reduction='mean')
         loss = (loss_e+loss_g)/2
@@ -117,13 +162,17 @@ class Model(nn.Module):
     def predict_emg_from_glove(self, logits):
         return self.emg_probs(logits).argmax(dim=2) # (N,tasks_g), emg pred for each glove
 
-    def correct_glove(self, logits):
-        N,tasks,tasks=logits.shape
-        argmax_glove=self.predict_glove_from_emg(logits)
-        labels_=self.get_labels(N,tasks)
-        correct = (argmax_glove.reshape(-1)==labels_).sum().cpu().item()
-        return correct
+    def correct_glove(self):
+        #N,tasks,tasks=logits.shape
+        #argmax_glove=self.predict_glove_from_emg(logits)
+        #labels_=self.get_labels(N,tasks)
+        #correct = (argmax_glove.reshape(-1)==labels_).sum().cpu().item()
+        #return correct
+        if self.train_model:
+            return np.array(self.correct_tr).mean()
+        return np.array(self.correct_v).mean()
 
+    # no updated
     def correct_emg(self, logits):
         N,tasks,tasks=logits.shape
         argmax_emg=self.predict_emg_from_glove(logits)
@@ -151,60 +200,54 @@ class EMGNet(nn.Module):
 
         self.conv_emg=nn.Sequential(
                 # conv -> bn -> relu
-                AdaBatchNorm2d(1),
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
-                nn.Conv2d(1,32,(3,3),padding=(1,1), bias=False),
-                nn.LeakyReLU(),
-                AdaBatchNorm2d(32),
+                nn.Conv2d(1,64,(3,3),padding=(1,1)),
+                AdaBatchNorm2d(64),
+                nn.ReLU(),
 
-                # smaller kernel
-                nn.Conv2d(32,64,(3,3),padding=(1,1), bias=False),
-                nn.LeakyReLU(),
+                nn.Conv2d(64,64,(3,3),padding=(1,1)),
                 AdaBatchNorm2d(64),
-
-                nn.Conv2d(64,64,(1,1), bias=False),
-                nn.LeakyReLU(),
-                AdaBatchNorm2d(64),
-
-                # added
-                nn.Conv2d(64, 64, (3, 3),padding=(1,1), bias=False),
-                nn.LeakyReLU(),
-                AdaBatchNorm2d(64),
-
-                nn.Conv2d(64,64,(1,1),padding=(0,0),bias=False),
-                nn.LeakyReLU(),
-                AdaBatchNorm2d(64),
-                nn.Dropout(.5),
-                
-                nn.Conv2d(64,64,(1,1), bias=False),
-                nn.LeakyReLU(),
-                AdaBatchNorm2d(64),
-                nn.Dropout(.5),
+                nn.ReLU(),
                 nn.Flatten(),
+                )
 
-                nn.Linear(EMG_DIM*WINDOW_MS*64, 512, bias=False),
-                nn.LeakyReLU(),
-                #AdaBatchNorm1d(512)
+        self.linear = nn.Sequential(
+                nn.Linear(EMG_DIM*64, 512, bias=False),
+                AdaBatchNorm1d(512),
+                nn.ReLU(),
+                nn.Dropout(),
+
+                nn.Linear(512, 512, bias=False),
+                AdaBatchNorm1d(512),
+                nn.ReLU(),
+                nn.Dropout(),
+
+                nn.Linear(512, 512, bias=False),
+                AdaBatchNorm1d(512),
+                nn.ReLU(),
+                nn.Dropout(),
+
+                nn.Linear(512, 37)
                 )
 
         # no acceleration data - can vary depending on activity of person
         # with prosthesis (like walking)
-        self.proj_mat = nn.Linear(512, self.d_e, bias=False)
+        self.proj_mat = nn.Linear(64, self.d_e, bias=False)
         self.to(self.device)
 
     def forward(self, EMG, ACC):
         ACC=ACC.squeeze(1)
-        #EMG=torch.randn(EMG.shape).to(torch.device("cuda"))
         out_emg=self.conv_emg(EMG)
+        out_emg=self.linear(out_emg)
         if self.use_acc:
             out_acc=self.feedforward_acc(ACC)
             out=torch.cat((out_emg,out_acc),dim=1)
             out=self.fusion_head(out)
         else:
             out=out_emg
-        out=self.proj_mat(out)
+        #out=self.proj_mat(out)
         return out
 
     def l2(self):
@@ -237,50 +280,55 @@ class GLOVENet(nn.Module):
         self.conv=nn.Sequential(
                 AdaBatchNorm2d(1),
                 # Initial glove features
-                nn.Conv2d(1,32,(1,3),padding=(0,1), bias=False),
+                nn.Conv2d(1,64,(5,3),padding=(2,1), bias=False),
                 # 3 (in the 15 ms case) x 1 
                 nn.LeakyReLU(),
-                AdaBatchNorm2d(32),
-
-                nn.Conv2d(32, 64, (1,3), padding=(0,1), bias=False),
-                nn.LeakyReLU(),
                 AdaBatchNorm2d(64),
-
-                # added 
+                
                 nn.Conv2d(64, 64, (1,1), padding=(0,0), bias=False),
                 nn.LeakyReLU(),
                 AdaBatchNorm2d(64),
-                #nn.Dropout(p=.5),
-                
+                nn.Dropout(p=.5),
+
                 nn.Conv2d(64, 64, (1,1), padding=(0,0), bias=False),
                 nn.LeakyReLU(),
                 AdaBatchNorm2d(64),
                 nn.Dropout(p=.5),
 
                 nn.Flatten(),
-                nn.Linear(64*GLOVE_DIM, 256, bias=False),
+                nn.Linear(64*ACC_DIM, 128, bias=False),
                 nn.LeakyReLU(),
-                AdaBatchNorm1d(256),
-                nn.Dropout(p=.5),
-                
-                nn.Linear(256, 256, bias=False),
-                nn.LeakyReLU(),
-                AdaBatchNorm1d(256),
-
+                AdaBatchNorm1d(128),
+                #nn.Dropout(p=.5),
                 # Should you have these before z vector?  (dropout + bn)
                 # Look at SOTA contrastive models and copy
                 )
 
-        self.proj_mat = nn.Linear(256, self.d_e, bias=False)
+        self.test = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(37, self.d_e),
+                #nn.LeakyReLU(),
+                #nn.Linear(128, 128),
+                #nn.LeakyReLU(),
+                #nn.Linear(128, 128),
+                #nn.LeakyReLU(),
+                )
+
+        #self.proj_mat = nn.Linear(128, self.d_e, bias=False)
         
         self.to(self.device)
 
-    def forward(self, GLOVE):
+    def forward(self, GLOVE, tasks):
         #GLOVE=GLOVE.mean(dim=2, keepdim=True)
-        GLOVE=GLOVE[:, :, :1]
-        #GLOVE=torch.randn(GLOVE.shape).to(torch.device("cuda"))
-        out=self.conv(GLOVE)
-        out=self.proj_mat(out)
+        #ACC=ACC.reshape(ACC.shape[0], 1, 3, ACC_DIM//3)
+        #GLOVE=GLOVE[:, :, :1]
+        #out=self.conv(ACC)
+        assert len(tasks)==37
+        n=GLOVE.shape[0]//len(tasks)
+        arange=torch.arange(len(tasks), dtype=torch.long, device=self.device).unsqueeze(1)
+        label=F.one_hot(arange.expand(-1, n).reshape(-1)).to(torch.float32)
+        out=self.test(label)
+        #out=self.proj_mat(out)
         return out
 
     def l2(self):
