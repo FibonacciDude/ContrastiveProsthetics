@@ -15,6 +15,7 @@ torch.manual_seed(42)
 torch.backends.cudnn.benchmark=True
 shuff=True
 
+# test incomplete (not updated)
 def test(model, dataset):
     dataset.set_test()
     model.set_test()
@@ -69,9 +70,6 @@ def validate(model, dataset):
 
     total_tasks=dataset.TASKS
     total_loss = []
-    total_correct = []
-    total=0
-    #print("Validation size:", len(dataset))
     idx_val = torch.randperm(len(dataset))
     loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
 
@@ -80,15 +78,12 @@ def validate(model, dataset):
         GLOVE=GLOVE.to(torch.float32).squeeze(0)
         ACC=ACC.to(torch.float32).squeeze(0)
         with torch.no_grad():
-            logits = model.forward(EMG,ACC,GLOVE,total_tasks,total_tasks)
-            loss=model.loss(logits)
+            loss = model.forward(EMG,ACC,GLOVE,dataset.tasks_mask)
             total_loss.append(loss.item())
-            correct=model.correct_glove(logits)
-            total_correct.append(correct)
-            total+=EMG.shape[0]
 
+    acc=model.correct_glove()
     total_loss=np.array(total_loss)
-    return total_loss.mean(), sum(total_correct)/total
+    return total_loss.mean(), acc
 
 def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints/model", annealing=False, load=None, verbose=False):
 
@@ -99,7 +94,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         print("Loading model")
         model.load_state_dict(torch.load(checkpoint_dir+"%d.pth"%load))
 
-    optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=0)
+    optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=0) # batchnorm wrong with AdamW
     if annealing:
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=500, eta_min=0,verbose=True)
     else:
@@ -131,48 +126,31 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         dataset.set_train()
 
         loss_train=[]
-        correct_amt=0
-        total=0
         for EMG,GLOVE,ACC in loader:
             EMG=EMG.to(torch.float32).squeeze(0)
             GLOVE=GLOVE.to(torch.float32).squeeze(0)
             ACC=ACC.to(torch.float32).squeeze(0)
 
             #with amp.autocast():
-            loss,logits=model.forward(EMG,ACC,GLOVE,total_tasks,total_tasks)
+            loss=model.forward(EMG,ACC,GLOVE,dataset.tasks_mask)
             l2=model.l2()*params['l2']
             b_loss=(loss+l2)
 
-            for p in model.parameters():
-                p.grad = None
+            optimizer.zero_grad(set_to_none=True)
             b_loss.backward()
             optimizer.step()
 
-            with torch.no_grad():
-                loss_train.append(loss.item())
-                correct=model.correct_glove(logits.detach())
-                correct_amt+=correct
-                total+=EMG.shape[0]
-           
-                # TODO: remove this later
-                """
-                if total % 25 == 0:
-                    _,acc=validate(model, dataset)
-                    lrs.append(scheduler.get_last_lr())
-                    running_acc.append(acc)
-                    model.set_train()
-                    model.train()
-                    dataset.set_train()
-                """
+            loss_train.append(loss.item())
+
+        acc_train=model.correct_glove()
 
         scheduler.step()
        
         if verbose:
-            acc_train=(correct_amt/total)
-            loss_val,acc=validate(model, dataset)
+            loss_val,acc_val=validate(model, dataset)
             loss_train=np.array(loss_train).mean()
-            print("Epoch %d. Train loss: %.4f\tVal loss: %.4f\tVal acc: %.6f\tTrain acc: %.4f" % (e, loss_train, loss_val, acc, acc_train))
-            final_val_acc=(loss_val,acc)
+            print("Epoch %d. Train loss: %.4f\tVal loss: %.4f\tVal acc: %.6f\tTrain acc: %.4f" % (e, loss_train, loss_val, acc_val, acc_train))
+            final_val_acc=(loss_val,acc_val)
             val_losses[e]=loss_val
 
         if checkpoint and loss_val <= max(list(val_losses.values())):
@@ -181,11 +159,10 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
             counter+=1
 
     if not verbose:
-        acc_train=(correct_amt/total)
-        loss_val,acc=validate(model, dataset)
+        loss_val,acc_val=validate(model, dataset)
         loss_train=np.array(loss_train).mean()
-        print("Epoch %d. Train loss: %.4f\tVal loss: %.4f\tVal acc: %.6f\tTrain acc: %.4f" % (e, loss_train, loss_val, acc, acc_train))
-        final_val_acc=(loss_val,acc)
+        print("Epoch %d. Train loss: %.4f\tVal loss: %.4f\tVal acc: %.6f\tTrain acc: %.4f" % (e, loss_train, loss_val, acc_val, acc_train))
+        final_val_acc=(loss_val,acc_val)
         val_losses[e]=loss_val
 
         model.set_train()
@@ -237,11 +214,12 @@ def main():
     dataset23 = DB23(device="cuda")
     dataset23.load_stored()
 
-    lrs = 10**np.random.uniform(low=-6, high=0, size=(360-150,))
-    regs = 10**np.random.uniform(low=-7, high=0, size=(340-150,))
-    regs = list(regs) + [0.0]*20
-    des=[128]
-    epochs=6
+    lrs = 10**np.random.uniform(low=-6, high=0, size=(200,))
+    regs = 10**np.random.uniform(low=-7, high=0, size=(190,))
+    regs = list(regs) + [0.0]*10
+    #des=[64, 128, 256]
+    des=[64]
+    epochs=8
     load=False
     values, keys = cross_validate(lrs, regs, des, dataset23, epochs=epochs, save=True, load=load)
 
@@ -254,7 +232,7 @@ def main():
     # test model
     d_e, lr, reg = best_key     # best model during validation
 
-    final_epochs=150
+    final_epochs=1000
     checkpoint=True
     verbose=True
     params = {
@@ -264,7 +242,7 @@ def main():
             'l2' : reg
             }
     print("Final training of model")
-    final_vals, model = train_loop(dataset23, params, checkpoint=checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_v5", verbose=verbose)
+    final_vals, model = train_loop(dataset23, params, checkpoint=checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_v6", verbose=verbose)
     print("Final validation model statistics")
     print(final_vals)
 
