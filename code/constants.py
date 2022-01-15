@@ -4,6 +4,8 @@ np.random.seed(42)
 
 PEOPLE_D2=list(range(40))
 PEOPLE_D3=[2,3,4,5,8,9]
+# add 1,3,10 for training + 2 more, rest for testing
+
 MAX_PEOPLE_D2=len(PEOPLE_D2)
 MAX_PEOPLE_D3=len(PEOPLE_D3)
 PEOPLE_D3=[pl+MAX_PEOPLE_D2-1 for pl in PEOPLE_D3] # adjust to be from 40-...
@@ -39,20 +41,23 @@ MAX_TEST_REPS=len(TEST_REPS)
 MAX_REPS=len(REPS)
 BLOCK_SIZE=1    # 2 might be too large of a batch size
 Hz=2000
-FACTOR=Hz//1000
+# downsampling
+DOWNSAMPLE=100 # how many frames per second
+FACTOR=int(Hz/DOWNSAMPLE)
+RMS_WINDOW=int(np.ceil(150 * Hz / 2048))
+WINDOW_EDGE = (RMS_WINDOW-1)//2
 Hz_glove=25     # much, much lower
 MS_GLOVE_SWITCH=(1/Hz_glove)*1000   # in ms
-# In ms*1000/Hz
-#TOTAL_WINDOW_SIZE=800  # we could do more data, in ms
-TOTAL_WINDOW_SIZE=200
+
+TOTAL_WINDOW_SIZE=int(Hz*1.5)
 #WINDOW_MS=20
 #WINDOW_STRIDE=10
 # instantaneous image
 WINDOW_MS=1
-WINDOW_STRIDE=2
+WINDOW_STRIDE=1
 # to  make it even for the mean in the network
 WINDOW_OUTPUT_DIM=TOTAL_WINDOW_SIZE//WINDOW_STRIDE
-WINDOW_BLOCK=50
+WINDOW_BLOCK=25
 #WINDOW_BLOCK=50
 #WINDOW_BLOCK=4
 #WINDOW_BLOCK=20
