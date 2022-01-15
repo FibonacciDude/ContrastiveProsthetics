@@ -120,7 +120,7 @@ class DB23(data.Dataset):
 
         # filter raw signal - 20 Hz to 400 Hz
         emg_=filter(emg_, (20, 400), butterworth_order=4,btype="bandpass") # bandpass filter
-        # rectify signal - window of ~147
+        # rectify signal - window ~= 147
         emg_=rms(emg_)
 
         emg_=self.torchize(emg_[self.time_mask])
@@ -128,10 +128,11 @@ class DB23(data.Dataset):
         acc_=self.torchize(acc_[self.time_mask])
         return emg_, acc_, glove_
 
-    def clip_es(Es):
+    def clip_es(self, Es):
         Es_new = []
         for ex in range(2):
             emg, acc, glove, stim, rep = Es[ex]
+            # is this necessary?
             eh,el=np.percentile(emg, [99.5, .5], axis=0)
             ah,al=np.percentile(acc, [99.5, .5], axis=0)
             gh,gl=np.percentile(glove, [99.5, .5], axis=0)

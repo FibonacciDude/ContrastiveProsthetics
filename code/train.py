@@ -144,6 +144,10 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
         acc_train=model.correct_glove()
 
+        if e == 16-1 or e == 24-1:
+            for g in optimizer.param_groups:
+                g['lr'] = g['lr'] / 10
+            print("changing lr", g['lr'])
         scheduler.step()
        
         if verbose:
@@ -220,7 +224,7 @@ def main():
     #des=[64, 128, 256]
     des=[64]
     epochs=8
-    load=False
+    load=True
     values, keys = cross_validate(lrs, regs, des, dataset23, epochs=epochs, save=True, load=load)
 
     # get best
@@ -238,8 +242,8 @@ def main():
     params = {
             'd_e' : int(d_e),
             'epochs' : final_epochs,
-            'lr' : lr,
-            'l2' : reg
+            'lr' : 1e-1, #lr,
+            'l2' : 1e-4 #reg
             }
     print("Final training of model")
     final_vals, model = train_loop(dataset23, params, checkpoint=checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_v6", verbose=verbose)

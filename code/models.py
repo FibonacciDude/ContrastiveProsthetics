@@ -214,22 +214,30 @@ class EMGNet(nn.Module):
                 )
 
         self.linear = nn.Sequential(
-                nn.Linear(EMG_DIM*64, 512, bias=False),
+                nn.Linear(EMG_DIM*64, 512),
+                AdaBatchNorm1d(512),
+                nn.ReLU(),
+
+                nn.Linear(512, 512),
+                AdaBatchNorm1d(512),
+                nn.ReLU(),
+
+                nn.Linear(512, 512),
                 AdaBatchNorm1d(512),
                 nn.ReLU(),
                 nn.Dropout(),
 
-                nn.Linear(512, 512, bias=False),
+                nn.Linear(512, 512),
                 AdaBatchNorm1d(512),
+                nn.ReLU(), 
+                nn.Dropout(),
+
+                nn.Linear(512, 128),
+                AdaBatchNorm1d(128),
                 nn.ReLU(),
                 nn.Dropout(),
 
-                nn.Linear(512, 512, bias=False),
-                AdaBatchNorm1d(512),
-                nn.ReLU(),
-                nn.Dropout(),
-
-                nn.Linear(512, 37)
+                nn.Linear(128, 37),
                 )
 
         # no acceleration data - can vary depending on activity of person
@@ -253,8 +261,8 @@ class EMGNet(nn.Module):
     def l2(self):
         reg_loss = 0
         for name,param in self.named_parameters():
-            if 'bn' not in name and 'bias' not in name:
-                reg_loss+=torch.norm(param)
+            #if 'bn' not in name and 'bias' not in name:
+            reg_loss+=torch.norm(param)
         return reg_loss
 
 
