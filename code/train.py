@@ -24,8 +24,10 @@ def test(model, dataset):
     model.eval()
 
     idx_test = torch.randperm(len(dataset))
-    #loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
-    loader=Loader(dataset=dataset, batch_size=args.batch_size, grouped=args.no_grouped)
+    if args.adabn:
+        loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
+    else:
+        loader=Loader(dataset=dataset, batch_size=args.batch_size, grouped=args.no_grouped)
     print("Test size:", len(dataset))
 
     total_tasks=dataset.TASKS
@@ -63,7 +65,6 @@ def test(model, dataset):
 
             total_correct.append(correct)
             total+=EMG.shape[0]
-
     total_loss=np.array(total_loss)
     #logits_labels=np.array(logits_labels)
     #np.save('../data/logits_labels.npy', logits_labels)
@@ -80,8 +81,10 @@ def validate(model, dataset):
     total_tasks=dataset.TASKS
     total_loss = []
     idx_val = torch.randperm(len(dataset))
-    #loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
-    loader=Loader(dataset=dataset, batch_size=args.batch_size, grouped=args.no_grouped)
+    if args.adabn:
+        loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
+    else:
+        loader=Loader(dataset=dataset, batch_size=args.batch_size, grouped=args.no_grouped)
 
     for EMG,GLOVE,ACC in loader:
         EMG=EMG.to(torch.float32)
@@ -126,8 +129,10 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     total_tasks = dataset.TASKS
     idx_train = torch.randperm(len(dataset))
 
-    #loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
-    loader=Loader(dataset=dataset, batch_size=args.batch_size, grouped=args.no_grouped)
+    if args.adabn:
+        loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
+    else:
+        loader=Loader(dataset=dataset, batch_size=args.batch_size, grouped=args.no_grouped)
 
     val_losses={}
     counter=0
@@ -143,11 +148,10 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         dataset.set_train()
 
         loss_train=[]
-        for EMG,GLOVE,ACC in loader:
+        for EMG,GLOVE,ACC in tqdm.tqdm(loader):
             EMG=EMG.to(torch.float32)
             GLOVE=GLOVE.to(torch.float32)
             ACC=ACC.to(torch.float32)
-
             if args.adabn:
                 EMG=EMG.squeeze(0)
                 GLOVE=GLOVE.squeeze(0)
@@ -245,27 +249,23 @@ def main(args):
     dataset23.load_stored()
     print("Dataset loaded")
 
-    lrs = [1e-4]*args.crossval_size
-    regs = 10**np.random.uniform(low=-8, high=0, size=(args.crossval_size,))
-    dps = np.random.uniform(low=.05, high=.95, size=(args.crossval_size,))
-    #lrs = 10**np.random.uniform(low=-6, high=0, size=(args.crossval_size,))
-    #regs = 10**np.random.uniform(low=-8, high=2, size=(args.crossval_size,))
-    #regs = list(regs)
-    #des=[64, 128, 256]
+    #lrs = [1e-4]*args.crossval_size
+    #regs = 10**np.random.uniform(low=-8, high=0, size=(args.crossval_size,))
+    dps = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
+    lrs = 10**np.random.uniform(low=-6, high=0, size=(args.crossval_size,))
+    regs = 10**np.random.uniform(low=-9, high=1, size=(args.crossval_size,))
     des=[64]
 
     values, keys = cross_validate(lrs, regs, des, dps, dataset23, epochs=args.crossval_epochs, save=True, load=args.crossval_load)
 
     # get best
-    best_val = values[:, 1].argmax()
+    best_val = np.nanargmax(values[:, 1])
     best_key = keys[best_val]
     print("Best combination: %s" % str(best_key))
     #print(sorted(list(values[:, 1])))
 
     # test model
-    d_e, lr, reg = best_key     # best model during validation
-    dp = 0.08319825261907951
-    #d_e, lr, reg, dp = best_key     # best model during validation
+    d_e, lr, reg, dp = best_key     # best model during validation
 
     params = {
             'd_e' : int(d_e),
@@ -274,6 +274,7 @@ def main(args):
             'dp' : dp,
             'l2' : reg
             }
+
     print("Final training of model")
     final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_v7", verbose=args.no_verbose)
     print("Final validation model statistics")
@@ -288,10 +289,10 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Training on ninapro dataset')
     parser.add_argument('--crossval_size', type=int, default=100)
     parser.add_argument('--crossval_epochs', type=int, default=1)
-    parser.add_argument('--crossval_load', action='store_true')
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--adabn', action='store_true')
     parser.add_argument('--final_epochs', type=int, default=100)
+    parser.add_argument('--crossval_load', action='store_true')
     parser.add_argument('--no_grouped', action='store_false')
     parser.add_argument('--no_checkpoint', action='store_false')
     parser.add_argument('--no_verbose', action='store_false')

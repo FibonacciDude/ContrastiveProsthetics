@@ -5,6 +5,8 @@ import numpy as np
 from constants import *
 from utils import RunningStats
 
+torch.autograd.set_detect_anomaly(True)
+
 # adaptive batch normalization - https://doi.org/10.1016/j.patcog.2018.03.005
 class AdaBatchNorm1d(nn.Module):
     # No code for the online mean/std at test time yet...
@@ -93,9 +95,11 @@ class Model(nn.Module):
         T=len(tasks)
 
         emg_features = self.encode_emg(EMG, ACC)
-        glove_features = self.encode_glove(GLOVE, tasks)
+        #glove_features = self.encode_glove(GLOVE, tasks)
+        #print(emg_features.min(), emg_features.max())
         emg_features = emg_features / emg_features.norm(dim=-1,keepdim=True)
-        glove_features = glove_features / glove_features.norm(dim=-1,keepdim=True)
+        #print(emg_features.min(), emg_features.max())
+        #glove_features = glove_features / glove_features.norm(dim=-1,keepdim=True)
 
         #emg_features = emg_features.reshape((T,-1,self.d_e)).permute((1,0,2))
         #glove_features = glove_features.reshape((T, -1,self.d_e)).permute((1,0,2))
@@ -106,8 +110,7 @@ class Model(nn.Module):
         n = emg_features.shape[0]//len(tasks)
 
         arange=torch.arange(T, dtype=torch.long, device=self.device).unsqueeze(1)
-        if self.adabn:
-            label=arange.expand(-1, n).reshape(-1).to(torch.long)
+        label=arange.expand(-1, n).reshape(-1).to(torch.long)
         loss = self.loss_f(emg_features, label)
 
         correct = (F.softmax(emg_features, dim=-1).argmax(-1)==label).sum()/emg_features.shape[0]
@@ -210,43 +213,42 @@ class EMGNet(nn.Module):
 
         self.conv_emg=nn.Sequential(
                 # conv -> bn -> relu
-                #self.bn2d_func(1),
+                self.bn2d_func(1),
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
                 nn.Conv2d(1,64,(3,3),padding=(1,1)),
-                self.bn2d_func(64),
                 nn.ReLU(),
+                self.bn2d_func(64),
 
                 nn.Conv2d(64,64,(3,3),padding=(1,1)),
-                self.bn2d_func(64),
                 nn.ReLU(),
+                self.bn2d_func(64),
                 nn.Flatten(),
                 )
 
         self.linear = nn.Sequential(
                 nn.Linear(EMG_DIM*64, 512),
-                self.bn1d_func(512),
                 nn.ReLU(),
+                self.bn1d_func(512),
 
                 nn.Linear(512, 512),
-                self.bn1d_func(512),
                 nn.ReLU(),
+                self.bn1d_func(512),
+
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                self.bn1d_func(512),
                 nn.Dropout(self.dp),
 
                 nn.Linear(512, 512),
-                self.bn1d_func(512),
-                nn.ReLU(),
-                nn.Dropout(self.dp),
-
-                nn.Linear(512, 512),
-                self.bn1d_func(512),
                 nn.ReLU(), 
+                #self.bn1d_func(512),
                 nn.Dropout(self.dp),
 
                 nn.Linear(512, 128),
-                self.bn1d_func(128),
                 nn.ReLU(),
+                #self.bn1d_func(128),
                 nn.Dropout(self.dp),
 
                 nn.Linear(128, 37),
@@ -258,10 +260,10 @@ class EMGNet(nn.Module):
         self.to(self.device)
 
     def forward(self, EMG, ACC):
-        ACC=ACC.squeeze(1)
         out_emg=self.conv_emg(EMG)
         out_emg=self.linear(out_emg)
         if self.use_acc:
+            ACC=ACC.squeeze(1)
             out_acc=self.feedforward_acc(ACC)
             out=torch.cat((out_emg,out_acc),dim=1)
             out=self.fusion_head(out)
@@ -273,8 +275,8 @@ class EMGNet(nn.Module):
     def l2(self):
         reg_loss = 0
         for name,param in self.named_parameters():
-            #if 'bn' not in name and 'bias' not in name:
-            reg_loss+=torch.norm(param)
+            if 'bn' not in name and 'bias' not in name:
+                reg_loss+=torch.norm(param)
         return reg_loss
 
 
@@ -316,7 +318,7 @@ class GLOVENet(nn.Module):
                 nn.Dropout(p=.5),
 
                 nn.Flatten(),
-                nn.Linear(64*ACC_DIM, 128, bias=False),
+                nn.Linear(64*GLOVE_DIM, 128, bias=False),
                 nn.LeakyReLU(),
                 AdaBatchNorm1d(128),
                 #nn.Dropout(p=.5),
