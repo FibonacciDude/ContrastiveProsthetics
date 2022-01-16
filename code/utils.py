@@ -45,19 +45,26 @@ class Loader(object):
         return math.ceil(self._len()/self.batch_size)
 
     def __iter__(self):
-        return self
+        while self._num_yielded<self.__len__():
+            yield self.next()
+        self.reset()
 
-    def __next__(self):
+    def reshape(self, batch):
+        # to give it as tasks, -1 for correct labels
+        dims=batch.shape
+        # self.grouped doesn't quite work
+        if self.grouped:
+            batch=batch.reshape(self.batch_size,self.tasks,-1).transpose(0,1).reshape(dims)
+        return batch
+
+    def next(self):
         self._num_yielded+=1
         self.idx+=1
-        batch=self.dataset[self.rand_idxs[self.block_size*self.idx:self.block_size*(self.idx+self.batch_size)]]
-        dims=batch.shape
-        # to give it as tasks, -1 for correct labels
-        batch=batch.reshape(-1,self.tasks,-1).transpose(0,1).reshape(dims)
-        # reset rand at the end of every epoch
-        if self._num_yielded==self.__len__():
-            self.reset()
-        return batch
+        EMG,GLOVE,ACC=self.dataset[self.rand_idxs[self.block_size*self.idx:self.block_size*(self.idx+self.batch_size)]]
+        EMG=self.reshape(EMG)
+        GLOVE=self.reshape(GLOVE)
+        ACC=self.reshape(ACC)
+        return (EMG,GLOVE,ACC)
 
 # https://www.johndcook.com/blog/standard_deviation/
 class RunningStats():
