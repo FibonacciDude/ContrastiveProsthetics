@@ -7,111 +7,62 @@ import torch.cuda.amp as amp
 import numpy as np
 from load import DB23
 from constants import *
-from utils import Loader
-from models import GLOVENet, EMGNet, Model
+from models import Model
 from pprint import pprint
-import json, time, tqdm
+from time import time
+from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 
 torch.manual_seed(42)
 torch.backends.cudnn.benchmark=True
 shuff=True
 
-# test incomplete (not updated)
 def test(model, dataset):
     dataset.set_test()
     model.set_test()
-    model.eval()
-
-    idx_test = torch.randperm(len(dataset))
-    if args.adabn:
-        loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
-    else:
-        loader=Loader(dataset=dataset, batch_size=args.batch_size, grouped=args.no_grouped)
-    print("Test size:", len(dataset))
-
     total_tasks=dataset.TASKS
+
     total_loss = []
-    total_correct = []  # in each 15 ms
-    total=0
+    loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size)
 
-    logits_labels = []   # rep_block, subject, window block
-
-    for EMG,GLOVE,ACC in loader:
+    for (EMG, label) in loader:
         EMG=EMG.to(torch.float32)
-        GLOVE=GLOVE.to(torch.float32)
-        ACC=ACC.to(torch.float32)
-
-        if args.adabn:
-            EMG=EMG.squeeze(0)
-            GLOVE=GLOVE.squeeze(0)
-            ACC=ACC.squeeze(0)
-
-        cnt=total//EMG.shape[0]
         with torch.no_grad():
-            logits = model.forward(EMG,ACC,GLOVE,total_tasks,total_tasks)
+            with amp.autocast():
+                features=model.forward(EMG)
+                loss=model.loss(features, label)
+                total_loss.append(loss.item())
 
-            # take mean for all 15 ms windows
-            #logits_save = logits.detach().cpu().numpy()
-            #for j, log in enumerate(logits):
-            #    np.save('../data/logits_%d_%d.npy' % (i, j), logits_save)
-
-            #logits_labels.append(dataset.get_idx_(i))
-
-            loss=model.loss(logits)
-            total_loss.append(loss.item())
-
-            correct=model.correct_glove(logits.detach())
-
-            total_correct.append(correct)
-            total+=EMG.shape[0]
-    total_loss=np.array(total_loss)
-    #logits_labels=np.array(logits_labels)
-    #np.save('../data/logits_labels.npy', logits_labels)
-    print("Testing finished, logits saved, max %d"%(len(dataset)-1))
-
-    return total_loss.mean(), sum(total_correct)/total
-
+    acc=model.correct_glove()
+    mean_loss=np.array(total_loss).mean()
+    return mean_loss, acc
 
 def validate(model, dataset):
     dataset.set_val()
     model.set_val()
-    model.eval()
-
     total_tasks=dataset.TASKS
+
     total_loss = []
-    idx_val = torch.randperm(len(dataset))
-    if args.adabn:
-        loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
-    else:
-        loader=Loader(dataset=dataset, batch_size=args.batch_size, grouped=args.no_grouped)
+    loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size)
 
-    for EMG,GLOVE,ACC in loader:
+    for (EMG, label) in loader:
         EMG=EMG.to(torch.float32)
-        GLOVE=GLOVE.to(torch.float32)
-        ACC=ACC.to(torch.float32)
-
-        if args.adabn:
-            EMG=EMG.squeeze(0)
-            GLOVE=GLOVE.squeeze(0)
-            ACC=ACC.squeeze(0)
         with torch.no_grad():
-            loss = model.forward(EMG,ACC,GLOVE,dataset.tasks_mask)
-            total_loss.append(loss.item())
+            with amp.autocast():
+                features=model.forward(EMG)
+                loss=model.loss(features, label)
+                total_loss.append(loss.item())
 
     acc=model.correct_glove()
-    total_loss=np.array(total_loss)
-    return total_loss.mean(), acc
+    mean_loss=np.array(total_loss).mean()
+    return mean_loss, acc
 
 def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints/model", annealing=False, load=None, verbose=False):
-
-    global args
-    # cross validation parameters
-    model = Model(d_e=params['d_e'], dp=params['dp'], adabn=args.adabn, train_model=True, device="cuda").to(torch.float32)
+    model = Model(d_e=params['d_e'], dp=params['dp'], train_model=True, adabn=args.no_adabn, device="cuda").to(torch.float32)
 
     if load is not None:
         print("Loading model")
-        model.load_state_dict(torch.load(checkpoint_dir+"%d.pth"%load))
+        model.load_state_dict(torch.load(checkpoint_dir+"%d.pt"%load))
 
     optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=0) # batchnorm wrong with AdamW
     if annealing:
@@ -119,71 +70,43 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     else:
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10**4, gamma=1, verbose=True)
 
-    #scheduler = optim.lr_scheduler.OneCycleLR(optimizer, total_steps=len(dataset)*params['epochs'], max_lr=params['lr'], div_factor=3, final_div_factor=3, verbose=False) # super-convergence scheduler
-    #scheduler = optim.lr_scheduler.CyclicLR(optimizer,base_lr=0, max_lr=2e-1, step_size_up=params['epochs']*len(dataset), step_size_down=0, verbose=False, cycle_momentum=False)
-
     # train data
     dataset.set_train()
-    model.set_train()
-    model.train()
     total_tasks = dataset.TASKS
-    idx_train = torch.randperm(len(dataset))
 
-    if args.adabn:
-        loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH)
-    else:
-        loader=Loader(dataset=dataset, batch_size=args.batch_size, grouped=args.no_grouped)
-
+    loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size)
     val_losses={}
     counter=0
    
-    #TODO: remove this later
-    #lrs, running_acc = [], []
-
     print("Training...")
-    for e in tqdm.trange(params['epochs']):
+    for e in trange(params['epochs']):
         
         model.set_train()
-        model.train()
         dataset.set_train()
 
         loss_train=[]
-        for EMG,GLOVE,ACC in tqdm.tqdm(loader):
+        for (EMG, label) in tqdm(loader):
             EMG=EMG.to(torch.float32)
-            GLOVE=GLOVE.to(torch.float32)
-            ACC=ACC.to(torch.float32)
-            if args.adabn:
-                EMG=EMG.squeeze(0)
-                GLOVE=GLOVE.squeeze(0)
-                ACC=ACC.squeeze(0)
-
-            #with amp.autocast():
-            loss=model.forward(EMG,ACC,GLOVE,dataset.tasks_mask)
-            l2=model.l2()*params['l2']
-            b_loss=(loss+l2)
+            with amp.autocast():
+                features=model.forward(EMG)
+                loss=model.loss(features, label)
+                loss_train.append(loss.item())
+                loss=loss+model.l2()*params['l2']
 
             optimizer.zero_grad(set_to_none=True)
-            b_loss.backward()
+            loss.backward()
             optimizer.step()
-
-            loss_train.append(loss.item())
 
         acc_train=model.correct_glove()
 
-        """
-        if e == 16-1 or e == 24-1:
-            for g in optimizer.param_groups:
-                g['lr'] = g['lr'] / 10
-            print("changing lr", g['lr'])
-        """
         scheduler.step()
        
         if verbose:
             loss_val,acc_val=validate(model, dataset)
             loss_train=np.array(loss_train).mean()
-            print("Epoch %d. Train loss: %.4f\tVal loss: %.4f\tVal acc: %.6f\tTrain acc: %.4f" % (e, loss_train, loss_val, acc_val, acc_train))
             final_val_acc=(loss_val,acc_val)
             val_losses[e]=loss_val
+            print("Epoch %d. Train loss: %.4f\tVal loss: %.4f\tVal acc: %.6f\tTrain acc: %.4f" % (e, loss_train, loss_val, acc_val, acc_train))
 
         if checkpoint and loss_val <= max(list(val_losses.values())):
             print("Checkpointing model...")
@@ -197,19 +120,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         final_val_acc=(loss_val,acc_val)
         val_losses[e]=loss_val
 
-        model.set_train()
-        model.train()
-        dataset.set_train()
-
-    """
-    plt.plot(lrs, running_acc)
-    plt.show()
-    best_lr=max(running_acc)
-    print("Best lr found:", best_lr)
-    """
-
     return final_val_acc, model
-
 
 def cross_validate(lrs, regs, des, dps, dataset, epochs=6, save=True, load=False):
     cross_val={}
@@ -226,7 +137,7 @@ def cross_validate(lrs, regs, des, dps, dataset, epochs=6, save=True, load=False
                         'dp' : dp,
                         }
                 (loss_t,acc_t),model=train_loop(dataset, params, checkpoint=False, verbose=False)
-                cross_val[(int(d_e), lr, reg, dp)]=(loss_t,acc_t) #, loss_t) #TODO
+                cross_val[(int(d_e), lr, reg, dp)]=(loss_t,acc_t)
 
         values = np.array(list(cross_val.values()))
         keys = np.array(list(cross_val.keys()))
@@ -241,10 +152,10 @@ def cross_validate(lrs, regs, des, dps, dataset, epochs=6, save=True, load=False
 
 def main(args):
     # DATASET - this is just for loading, change at will (no need to resample)
-    new_people=3
+    new_people=4
     new_tasks=4
 
-    dataset23 = DB23(adabn=args.adabn)
+    dataset23 = DB23()
     print("Loading dataset")
     dataset23.load_stored()
     print("Dataset loaded")
@@ -290,10 +201,9 @@ if __name__=="__main__":
     parser.add_argument('--crossval_size', type=int, default=100)
     parser.add_argument('--crossval_epochs', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--adabn', action='store_true')
     parser.add_argument('--final_epochs', type=int, default=100)
     parser.add_argument('--crossval_load', action='store_true')
-    parser.add_argument('--no_grouped', action='store_false')
+    parser.add_argument('--no_adabn', action='store_false')
     parser.add_argument('--no_checkpoint', action='store_false')
     parser.add_argument('--no_verbose', action='store_false')
     args = parser.parse_args()

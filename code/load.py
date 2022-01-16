@@ -19,11 +19,10 @@ except RuntimeError:
 torch.manual_seed(42)
 
 class DB23(data.Dataset):
-    def __init__(self, adabn=True, train=True, val=False):
+    def __init__(self, train=True, val=False):
         self.device=torch.device("cuda")
         self.train=train
         self.val=val
-        self.adabn=adabn
         self.raw=False
 
         self.tasks_train=torchize(TRAIN_TASKS)
@@ -31,19 +30,19 @@ class DB23(data.Dataset):
         self.tasks=torchize(TASKS)
 
         self.people_train=torchize(TRAIN_PEOPLE_IDXS)
+        self.people_test=torchize(TEST_PEOPLE_IDXS)
         self.people=torchize(PEOPLE_IDXS)
-
-        _rand_perm_train=torch.randperm(MAX_TRAIN_REPS, device=self.device)
-        _rand_perm_test=torch.randperm(MAX_TEST_REPS, device=self.device)
 
         train_reps = torchize(TRAIN_REPS)
         test_reps = torchize(TEST_REPS)
+        reps = torchize(REPS)
+
         self.rep_train=train_reps[:-1]-1
         self.rep_val=train_reps[-1:]-1
         self.rep_test=test_reps-1
+        self.reps=reps
 
-        self.window_mask=torch.randperm(WINDOW_OUTPUT_DIM-1, device=self.device)
-
+        self.window_mask=torch.randperm(WINDOW_OUTPUT_DIM, device=self.device)
         self.path="/home/breezy/ULM/prosthetics/db23/"
 
     def set_train(self):
@@ -58,30 +57,19 @@ class DB23(data.Dataset):
         self.train=False
         self.val=True
 
-    def __len__(self):
-        if self.train:
-            reps = int((MAX_TRAIN_REPS-1)*(1/BLOCK_SIZE if self.adabn else 1))
-        elif self.val:
-            reps = 1
-        else:
-            reps = int((MAX_TEST_REPS-1)*(1/BLOCK_SIZE if self.adabn else 1))
-        windows = MAX_WINDOW_BLOCKS if self.adabn else WINDOW_OUTPUT_DIM
-        tasks=1 if self.adabn else self.TASKS
-        return self.PEOPLE*reps*windows*tasks
-
     def load_stored(self):
         self.EMG=torch.load(self.path+'data/emg.pt', map_location=self.device)
-        self.ACC=torch.load(self.path+'data/acc.pt', map_location=self.device)
-        self.GLOVE=torch.load(self.path+'data/glove.pt', map_location=self.device)
         self.EMG.cuda()
-        self.ACC.cuda()
-        self.GLOVE.cuda()
+        #self.ACC=torch.load(self.path+'data/acc.pt', map_location=self.device)
+        #self.GLOVE=torch.load(self.path+'data/glove.pt', map_location=self.device)
+        #self.ACC.cuda()
+        #self.GLOVE.cuda()
 
     def load_subject(self, subject):
         EMG=self.EMG[subject]
-        ACC=self.ACC[subject]
-        GLOVE=self.GLOVE[subject]
-        return EMG,ACC,GLOVE
+        return EMG
+        #ACC=self.ACC[subject]
+        #GLOVE=self.GLOVE[subject]
 
     def save(self, tensors):
         EMG, ACC, GLOVE = tensors
@@ -182,92 +170,67 @@ class DB23(data.Dataset):
         self.save((EMG,ACC,GLOVE)) 
         print("Dataset (un)loading completed successfully")
 
+    def __len__(self):
+        return self.PEOPLE*self.TASKS*self.REPS*WINDOW_OUTPUT_DIM
+
     @property
     def PEOPLE(self):
-        return MAX_PEOPLE_TRAIN if (self.train or self.val) else MAX_PEOPLE 
+        return MAX_PEOPLE_TRAIN if (self.train or self.val) else MAX_PEOPLE_TEST #MAX_PEOPLE 
 
     @property
     def TASKS(self):
-        return MAX_TASKS_TRAIN+1 if (self.train or self.val) else MAX_TASKS+1
+        return MAX_TASKS_TRAIN+1 #if (self.train or self.val) else MAX_TASKS+1
+
+    @property
+    def REPS(self):
+        if self.train:
+            return MAX_TRAIN_REPS-1
+        elif self.val:
+            return 1
+        else:
+            return MAX_REPS #MAX_TEST_REPS
 
     @property
     def tasks_mask(self):
-        tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
+        #tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
+        tasks_mask=self.tasks_train # if (self.train or self.val) else self.tasks
         tasks_mask=torch.cat((tasks_mask, torchize([0])))
         return tasks_mask
 
     @property
     def people_mask(self):
-        return self.people_train if (self.train or self.val) else self.people
+        # test on all people
+        return self.people_train if (self.train or self.val) else self.people_test
 
     @property
-    def block_mask(self):
+    def rep_mask(self):
         if self.train:
             return self.rep_train
         elif self.val:
             return self.rep_val
         else:
-            return self.rep_test
+            return self.reps #self.rep_test
 
-    def get_idx_(self, idx):
-        # larger batch size in training
-        mul = self.PEOPLE * MAX_WINDOW_BLOCKS
-        rep_block = idx // mul
-        sub_wind_idx = idx % mul
-        subject = sub_wind_idx // MAX_WINDOW_BLOCKS
-        window_block = sub_wind_idx % MAX_WINDOW_BLOCKS
-        return (rep_block, subject, window_block)
+    def slice_batch(self, tensor, DIM, idx):
+        person_idx = idx // (self.TASKS * self.REPS * WINDOW_OUTPUT_DIM)
+        rep_output_tasks_idx = idx % (self.TASKS * self.REPS * WINDOW_OUTPUT_DIM)
+        task_idx = rep_output_tasks_idx // (self.REPS * WINDOW_OUTPUT_DIM)
+        rep_output_idx = rep_output_tasks_idx % (self.REPS * WINDOW_OUTPUT_DIM)
+        tensor = tensor[person_idx, task_idx]
+        tensor = tensor.reshape(-1, DIM)[task_idx]
+        # now we have only one slice, convert to an image
+        tensor = tensor.reshape(1, 1, DIM)
+        label = torchize(task_idx)
+        return tensor, label
 
-    def slice_batch(self, tensor, tmask, bmask, wmask, dim):
-        shape=(self.TASKS*BLOCK_SIZE, FINAL_WINDOW_SIZE, dim)
-        tensor=tensor[tmask, bmask].reshape(shape)
-        stride = (FINAL_WINDOW_SIZE*dim, WINDOW_STRIDE*dim, dim, 1)
-        tensor=torch.as_strided(tensor, (self.TASKS*BLOCK_SIZE, WINDOW_OUTPUT_DIM-1, WINDOW_MS, dim), stride)
-        return tensor[:, wmask].reshape(-1, 1, WINDOW_MS, dim)
-
-    def slice_idx(self, tensor, dim, idx):
-        t=tensor.transpose(0,1)[self.tasks_mask]
-        t=t[:, self.people_mask]
-        t=t[:, :, self.block_mask]
-        return t.reshape(-1, 1, WINDOW_MS, dim)[idx]
-
-    def __getitem__(self, batch_idx):
-        # batch_idx -> rep_block x (subject x window_block)
-        # return batch of shape ( rep * amtwindows * maxtask) x windowms x respective dim
-        # acc dimension is just a mean
-        # glove and emg are images (windowms x respective dim)
-        # shape is (people, tasks, reps, finalwindowsize, dim)
-        if not self.adabn:
-            # randomly sample everything - forget about strides (fix later)
-            # always 37 tasks though
-            # EMG transpose becomes (tasks, people, reps, ...)
-            # output shape = (37, 1, ms, dim)
-            emg=self.slice_idx(self.EMG,EMG_DIM,batch_idx)
-            glove=self.slice_idx(self.GLOVE,GLOVE_DIM,batch_idx)
-            acc=self.slice_idx(self.ACC,ACC_DIM,batch_idx).mean(2)
-            return (emg,glove,acc)
-
+    def __getitem__(self, idx):
         if self.raw:
             return self.EMG,self.ACC,self.GLOVE
-        rep_block, subject, window_block = self.get_idx_(batch_idx)
-
-        block_mask=self.block_mask[rep_block*BLOCK_SIZE:(rep_block+1)*BLOCK_SIZE]
-        window_mask=self.window_mask[window_block*WINDOW_BLOCK:(window_block+1)*WINDOW_BLOCK]
-        tasks_mask=self.tasks_mask
-
-        # from people mask
-        subject = self.people_mask[subject]
-        # from the actual big tensor
-        subject = (self.people == subject).nonzero(as_tuple=False).item()
-
-        # shape = (41, 6, window_ms, amt_windows, dim), specific case
-        EMG,ACC,GLOVE=self.load_subject(subject)
-    
-        EMG=self.slice_batch(EMG, tasks_mask, block_mask, window_mask, EMG_DIM)
-        GLOVE=self.slice_batch(GLOVE, tasks_mask, block_mask, window_mask, GLOVE_DIM)
-        ACC=self.slice_batch(ACC, tasks_mask, block_mask, window_mask, ACC_DIM)
-        ACC=ACC.squeeze(1).mean(1)
-        return (EMG,GLOVE,ACC)
+        EMG, label=self.slice_batch(self.EMG, EMG_DIM, idx)
+        return EMG, label
+        #GLOVE=self.slice_batch(self.GLOVE, GLOVE_DIM, idx)
+        #ACC=self.slice_batch(self.ACC, ACC_DIM, idx)
+        #return (EMG,GLOVE,ACC), label
 
 
 def load(db):
