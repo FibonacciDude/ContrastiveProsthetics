@@ -56,13 +56,15 @@ class LocalLinear(nn.Module):
 
 # modeled after https://github.com/openai/CLIP/blob/main/clip/model.py
 class Model(nn.Module):
-    def __init__(self, d_e, train_model=True, device="cuda"):
+    def __init__(self, d_e, dp=.5, adabn=True, train_model=True, device="cuda"):
         super(Model,self).__init__()
 
         self.train_model = train_model
         self.d_e = d_e
+        self.adabn=adabn
         self.device = torch.device(device)
-        self.emg_net = EMGNet(d_e=d_e) # emg model
+        self.emg_net = EMGNet(d_e=d_e, dp=dp, adabn=adabn) # emg model
+        # glove is behind on all the new features
         self.glove_net = GLOVENet(d_e=d_e) # glove model
         self.loss_f = torch.nn.functional.cross_entropy
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1)/0.07)    # CLIP logit scale
@@ -104,7 +106,8 @@ class Model(nn.Module):
         n = emg_features.shape[0]//len(tasks)
 
         arange=torch.arange(T, dtype=torch.long, device=self.device).unsqueeze(1)
-        label=arange.expand(-1, n).reshape(-1).to(torch.long)
+        if self.adabn:
+            label=arange.expand(-1, n).reshape(-1).to(torch.long)
         loss = self.loss_f(emg_features, label)
 
         correct = (F.softmax(emg_features, dim=-1).argmax(-1)==label).sum()/emg_features.shape[0]
@@ -183,10 +186,17 @@ class Model(nn.Module):
         return self.emg_net.l2() + self.glove_net.l2()
 
 class EMGNet(nn.Module):
-    def __init__(self, d_e, train=True, device="cuda"):
+    def __init__(self, d_e, dp=.5, adabn=True, train=True, device="cuda"):
         super(EMGNet,self).__init__()
         self.device=torch.device(device)
         self.d_e=d_e
+        self.dp=dp
+        if adabn:
+            self.bn1d_func = AdaBatchNorm1d
+            self.bn2d_func = AdaBatchNorm2d
+        else:
+            self.bn1d_func = nn.BatchNorm1d
+            self.bn2d_func = nn.BatchNorm2d
 
         # No fusion for now. 
         # Reason: The classification might be affected with different activites
@@ -200,42 +210,44 @@ class EMGNet(nn.Module):
 
         self.conv_emg=nn.Sequential(
                 # conv -> bn -> relu
+                #self.bn2d_func(1),
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
                 nn.Conv2d(1,64,(3,3),padding=(1,1)),
-                AdaBatchNorm2d(64),
+                self.bn2d_func(64),
                 nn.ReLU(),
 
                 nn.Conv2d(64,64,(3,3),padding=(1,1)),
-                AdaBatchNorm2d(64),
+                self.bn2d_func(64),
                 nn.ReLU(),
                 nn.Flatten(),
                 )
 
         self.linear = nn.Sequential(
                 nn.Linear(EMG_DIM*64, 512),
-                AdaBatchNorm1d(512),
+                self.bn1d_func(512),
                 nn.ReLU(),
 
                 nn.Linear(512, 512),
-                AdaBatchNorm1d(512),
+                self.bn1d_func(512),
                 nn.ReLU(),
+                nn.Dropout(self.dp),
 
                 nn.Linear(512, 512),
-                AdaBatchNorm1d(512),
+                self.bn1d_func(512),
                 nn.ReLU(),
-                nn.Dropout(),
+                nn.Dropout(self.dp),
 
                 nn.Linear(512, 512),
-                AdaBatchNorm1d(512),
+                self.bn1d_func(512),
                 nn.ReLU(), 
-                nn.Dropout(),
+                nn.Dropout(self.dp),
 
                 nn.Linear(512, 128),
-                AdaBatchNorm1d(128),
+                self.bn1d_func(128),
                 nn.ReLU(),
-                nn.Dropout(),
+                nn.Dropout(self.dp),
 
                 nn.Linear(128, 37),
                 )
