@@ -9,63 +9,6 @@ import scipy.io as sio
 def torchize(X):
     return torch.from_numpy(np.array(X)).to(torch.device("cuda"))
 
-# inspired by https://github.com/pytorch/pytorch/blob/master/torch/utils/data/dataloader.py
-class Loader(object):
-    # Always shuffles, no multiprocessing
-    def __init__(self, dataset, batch_size, grouped=True):
-        # grouped = grouped by tasks (tasks x batch_size)
-        self.dataset=dataset
-        self.dataset.adabn=False # no adabn whatever stuff for now
-
-        self.grouped=grouped
-        self.batch_size=batch_size
-        self.device=torch.device("cuda")
-
-        self.total_len = len(self.dataset)
-        self.tasks=self.dataset.TASKS
-        self.d = self.total_len//self.tasks
-        self.block_size=self.tasks if self.grouped else 1
-        assert self.batch_size <= self._len(), "Batch size too big"
-        assert self.total_len % self.block_size==0
-        self.reset()
-
-    def reset(self):
-        self._num_yielded,self.idx=0,-1
-        self.rand_idxs = torch.empty((self.tasks, self.d), device=self.device, dtype=torch.long)
-        for t in range(self.tasks):
-            self.rand_idxs[t] = torch.randperm(self.d, dtype=torch.long, device=self.device)+self.d*t
-        # tasks x d -> d x tasks -> -1
-        self.rand_idxs = self.rand_idxs.T.flatten()
-        return self.rand_idxs
-
-    def _len(self):
-        return self.d if self.grouped else self.total_len
-
-    def __len__(self):
-        return math.ceil(self._len()/self.batch_size)
-
-    def __iter__(self):
-        while self._num_yielded<self.__len__():
-            yield self.next()
-        self.reset()
-
-    def reshape(self, batch):
-        # to give it as tasks, -1 for correct labels
-        dims=batch.shape
-        # self.grouped doesn't quite work
-        if self.grouped:
-            batch=batch.reshape(self.batch_size,self.tasks,-1).transpose(0,1).reshape(dims)
-        return batch
-
-    def next(self):
-        self._num_yielded+=1
-        self.idx+=1
-        EMG,GLOVE,ACC=self.dataset[self.rand_idxs[self.block_size*self.idx:self.block_size*(self.idx+self.batch_size)]]
-        EMG=self.reshape(EMG)
-        GLOVE=self.reshape(GLOVE)
-        ACC=self.reshape(ACC)
-        return (EMG,GLOVE,ACC)
-
 # https://www.johndcook.com/blog/standard_deviation/
 class RunningStats():
     def __init__(self, norm=False, complete=False):
