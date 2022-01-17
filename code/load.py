@@ -170,9 +170,6 @@ class DB23(data.Dataset):
         self.save((EMG,ACC,GLOVE)) 
         print("Dataset (un)loading completed successfully")
 
-    def __len__(self):
-        return self.PEOPLE*self.TASKS*self.REPS*WINDOW_OUTPUT_DIM
-
     @property
     def PEOPLE(self):
         return MAX_PEOPLE_TRAIN if (self.train or self.val) else MAX_PEOPLE_TEST #MAX_PEOPLE 
@@ -211,13 +208,16 @@ class DB23(data.Dataset):
         else:
             return self.reps #self.rep_test
 
+    def __len__(self):
+        return self.PEOPLE*self.TASKS*self.REPS*WINDOW_OUTPUT_DIM
+
     def slice_batch(self, tensor, DIM, idx):
-        person_idx = idx // (self.TASKS * self.REPS * WINDOW_OUTPUT_DIM)
-        rep_output_tasks_idx = idx % (self.TASKS * self.REPS * WINDOW_OUTPUT_DIM)
-        task_idx = rep_output_tasks_idx // (self.REPS * WINDOW_OUTPUT_DIM)
-        rep_output_idx = rep_output_tasks_idx % (self.REPS * WINDOW_OUTPUT_DIM)
-        tensor = tensor[person_idx, task_idx]
-        tensor = tensor.reshape(-1, DIM)[task_idx]
+        task_idx = idx // (self.PEOPLE * self.REPS * WINDOW_OUTPUT_DIM)
+        people_rep_output_idx = idx % (self.PEOPLE * self.REPS * WINDOW_OUTPUT_DIM)
+        people_idx = people_rep_output_idx // (self.REPS * WINDOW_OUTPUT_DIM)
+        rep_output_idx = people_rep_output_idx % (self.REPS * WINDOW_OUTPUT_DIM)
+        tensor = tensor[people_idx, task_idx]
+        tensor = tensor.reshape(-1, DIM)[rep_output_idx]
         # now we have only one slice, convert to an image
         tensor = tensor.reshape(1, 1, DIM)
         label = torchize(task_idx)
