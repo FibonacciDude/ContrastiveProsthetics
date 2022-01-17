@@ -9,6 +9,34 @@ import scipy.io as sio
 def torchize(X):
     return torch.from_numpy(np.array(X)).to(torch.device("cuda"))
 
+class Sampler():
+    def __init__(self, dataset, batch_size):
+        self.dataset=dataset
+        self.bs=batch_size
+        self.device=torch.device("cuda")
+        self.tasks=dataset.TASKS
+        self.d=len(dataset)//self.tasks
+        self.num_points = self.d // self.bs
+        self.left_overs = self.d % self.bs
+        print(self.num_points, self.left_overs)
+        self.reset()
+
+    def reset(self):
+        self.rand_idxs = torch.empty((self.tasks, self.d), device=self.device, dtype=torch.long)
+        for t in range(self.tasks):
+            self.rand_idxs[t] = torch.randperm(self.d, dtype=torch.long, device=self.device)+self.d*t
+        # tasks x d -> d x tasks -> bs*tasks x -1
+        self.rand_idxs = self.rand_idxs.T[:-self.left_overs].flatten().reshape(self.num_points, self.bs*self.tasks)
+
+    def __len__(self):
+        return self.num_points
+
+    def __iter__(self):
+        for batch in self.rand_idxs:
+            yield batch
+        self.reset()
+        return
+
 # https://www.johndcook.com/blog/standard_deviation/
 class RunningStats():
     def __init__(self, norm=False, complete=False):
@@ -17,8 +45,6 @@ class RunningStats():
         self.norm=norm
         self.complete = complete
         if not norm:
-            #self.min = float('inf')
-            #self.max = -float('inf')
             self.min = 10**10
             self.max = -10**10
 

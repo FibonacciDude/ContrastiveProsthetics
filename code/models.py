@@ -5,7 +5,7 @@ import numpy as np
 from constants import *
 from utils import RunningStats
 
-torch.autograd.set_detect_anomaly(True)
+#torch.autograd.set_detect_anomaly(True)
 
 # adaptive batch normalization - https://doi.org/10.1016/j.patcog.2018.03.005
 class AdaBatchNorm1d(nn.Module):
@@ -185,4 +185,3 @@ class EMGNet(nn.Module):
             if 'bn' not in name and 'bias' not in name:
                 reg_loss+=torch.norm(param)
         return reg_loss
-

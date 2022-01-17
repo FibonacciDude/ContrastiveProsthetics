@@ -10,6 +10,7 @@ from constants import *
 from models import Model
 from pprint import pprint
 from time import time
+from utils import Sampler
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 
@@ -23,14 +24,17 @@ def test(model, dataset):
     total_tasks=dataset.TASKS
 
     total_loss = []
-    loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size)
+    #loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, sampler=Sampler(dataset, args.batch_size))
+    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
     for (EMG, label) in loader:
+        EMG=EMG.squeeze(0)
+        label=label.squeeze(0)
         EMG=EMG.to(torch.float32)
         with torch.no_grad():
             with amp.autocast():
-                features=model.forward(EMG)
-                loss=model.loss(features, label)
+                logits=model.forward(EMG)
+                loss=model.loss(logits, label)
                 total_loss.append(loss.item())
 
     acc=model.correct_glove()
@@ -43,9 +47,12 @@ def validate(model, dataset):
     total_tasks=dataset.TASKS
 
     total_loss = []
-    loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size)
+    #loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, sampler=Sampler(dataset, args.batch_size))
+    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
     for (EMG, label) in loader:
+        EMG=EMG.squeeze(0)
+        label=label.squeeze(0)
         EMG=EMG.to(torch.float32)
         with torch.no_grad():
             with amp.autocast():
@@ -74,7 +81,9 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     dataset.set_train()
     total_tasks = dataset.TASKS
 
-    loader=data.DataLoader(dataset, shuffle=shuff, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size)
+    #loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, sampler=Sampler(dataset, args.batch_size))
+    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
+
     val_losses={}
     counter=0
    
@@ -83,13 +92,15 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         
         model.set_train()
         dataset.set_train()
-
+        # create new 
         loss_train=[]
         for (EMG, label) in tqdm(loader):
+            EMG=EMG.squeeze(0)
+            label=label.squeeze(0)
             EMG=EMG.to(torch.float32)
             with amp.autocast():
-                features=model.forward(EMG)
-                loss=model.loss(features, label)
+                logits=model.forward(EMG)
+                loss=model.loss(logits, label)
                 loss_train.append(loss.item())
                 loss=loss+model.l2()*params['l2']
 
@@ -187,7 +198,7 @@ def main(args):
             }
 
     print("Final training of model")
-    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_v7", verbose=args.no_verbose)
+    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_v8", verbose=args.no_verbose)
     print("Final validation model statistics")
     print(final_vals)
 
