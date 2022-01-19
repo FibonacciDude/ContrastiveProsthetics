@@ -5,80 +5,85 @@ from constants import *
 from scipy.ndimage import uniform_filter1d
 from scipy import signal
 import scipy.io as sio
+from tqdm import tqdm
+
+torch.manual_seed(42)
 
 def torchize(X):
     return torch.from_numpy(np.array(X)).to(torch.device("cuda"))
 
-class Sampler():
-    def __init__(self, dataset, batch_size):
+class TaskWrapper():
+    def __init__(self, dataset):
         self.dataset=dataset
-        self.bs=batch_size
         self.device=torch.device("cuda")
-        self.tasks=dataset.TASKS
-        self.d=len(dataset)//self.tasks
-        self.num_points = self.d // self.bs
-        self.left_overs = self.d % self.bs
-        print(self.num_points, self.left_overs)
         self.reset()
-
+        
     def reset(self):
-        self.rand_idxs = torch.empty((self.tasks, self.d), device=self.device, dtype=torch.long)
-        for t in range(self.tasks):
-            self.rand_idxs[t] = torch.randperm(self.d, dtype=torch.long, device=self.device)+self.d*t
-        # tasks x d -> d x tasks -> bs*tasks x -1
-        self.rand_idxs = self.rand_idxs.T[:-self.left_overs].flatten().reshape(self.num_points, self.bs*self.tasks)
+        self.rand_idxs = torch.empty((self.dataset.TASKS, self.dataset.D), device=self.device, dtype=torch.long)
+        for t in range(self.dataset.TASKS):
+            self.rand_idxs[t] = torch.randperm(self.dataset.D, dtype=torch.long, device=self.device)
+        # tasks x d
+
+    def __getattr__(self, name):
+        #def method(*args, **kwargs):
+        return getattr(self.dataset, name)
+        #return method
 
     def __len__(self):
-        return self.num_points
+        return self.dataset.D
 
-    def __iter__(self):
-        for batch in self.rand_idxs:
-            yield batch
+    def __getitem__(self, idx):
+        tensor_emg = torch.empty((self.dataset.TASKS,1,1,EMG_DIM), dtype=self.dataset.EMG.dtype, device=self.device)
+        tensor_glove = torch.empty((self.dataset.TASKS,1,1,GLOVE_DIM), dtype=self.dataset.glover.GLOVE.dtype, device=self.device)
+        for task_idx, task in enumerate(self.dataset.tasks_mask):
+            tensor_emg[task_idx]=self.dataset.__getitem__(task_idx, self.rand_idxs[task_idx, idx])
+            tensor_glove[task_idx]=self.dataset.glover.slice_batch(task, self.rand_idxs[task_idx, idx])
+        return tensor_emg, tensor_glove
+
+    def set_train(self):
+        self.dataset.train=True
+        self.dataset.val=False
         self.reset()
-        return
+
+    def set_val(self):
+        self.dataset.train=False
+        self.dataset.val=True
+        self.reset()
+
+    def set_test(self):
+        self.dataset.train=False
+        self.dataset.val=False
+        self.reset()
 
 # https://www.johndcook.com/blog/standard_deviation/
 class RunningStats():
-    def __init__(self, norm=False, complete=False):
+    def __init__(self, path_dir, complete=False):
         self.counter = 0
-        # if norm, then normalize with mean and std
-        self.norm=norm
         self.complete = complete
-        if not norm:
-            self.min = 10**10
-            self.max = -10**10
+        self.path=path_dir
 
     def push(self, X):
         self.counter+=1
         self.np = isinstance(X, np.ndarray)
-        if not self.np and self.counter==1 and not self.norm:
-            self.min=torchize(self.min)
-            self.max=torchize(self.max)
-        
-        if self.norm:
-            X=X.mean(0) # along window size dimension (constant for all X)
-            if self.counter==1:
-                self.old_mean = self.new_mean = X
-                self.old_std = np.zeros(X.shape, dtype=X.dtype) if self.np else torch.zeros(X.shape, device=X.device, dtype=X.dtype)
-            else:
-                self.new_mean=self.old_mean + (X-self.old_mean)/self.counter
-                self.new_std=self.old_std+(X-self.old_mean)*(X-self.new_mean)
-                self.old_mean=self.new_mean
-                self.old_std=self.new_std
+
+        X=X.mean(0) # along window size dimension (constant for all X)
+        if self.counter==1:
+            self.old_mean = self.new_mean = X
+            self.old_std = np.zeros(X.shape, dtype=X.dtype) if self.np else torch.zeros(X.shape, device=X.device, dtype=X.dtype)
         else:
-            if self.np:
-                x_max,x_min=np.percentile(X, [99.5, .5])
-                self.min = np.min(self.min, x_min)
-                self.max = np.max(self.max, x_max)
-            else:
-                x_max,x_min=np.percentile(X.cpu().numpy(), [99.5, .5])
-                self.min = torch.minimum(self.min, torchize(x_min))
-                self.max = torch.maximum(self.max, torchize(x_max))
+            self.new_mean=self.old_mean + (X-self.old_mean)/self.counter
+            self.new_std=self.old_std+(X-self.old_mean)*(X-self.new_mean)
+            self.old_mean=self.new_mean
+            self.old_std=self.new_std
 
     def mean(self):
         mean=self.new_mean
         if self.complete:
             mean=mean.mean()
+        if not self.np:
+            np.save(self.path+"mean.npy", mean.cpu().numpy())
+        else:
+            np.save(self.path+"mean.npy", mean)
         return mean
 
     def variance(self):
@@ -89,18 +94,19 @@ class RunningStats():
         if self.complete:
             var = var.mean()
         if self.np:
-            return np.sqrt(self.variance())
-        return torch.sqrt(self.variance())
+            std=np.sqrt(self.variance())
+        else:
+            std=torch.sqrt(self.variance())
+        if not self.np:
+            np.save(self.path+"std.npy", std.cpu().numpy())
+        else:
+            np.save(self.path+"std.npy", std)
+        return std
 
     def mean_std(self):
         return self.mean(), self.std()
 
-    def min_max(self):
-        return self.min, self.max
-
     def normalize(self, X):
-        if not self.norm:
-            return (X-self.min)/(self.max-self.min)
         return (X-self.mean())/self.std()
 
 
@@ -147,12 +153,81 @@ def clip_es(Es):
         Es_new.append((emg, acc, glove, stim, rep))
     return tuple(Es_new)
 
-def get_np(dbnum, p_dir, n):
-    E_mat=sio.loadmat("../db%s/s%s/S%s_E%s_A1"%(dbnum,p_dir,p_dir,n))
-    emg=E_mat['emg'] # 12
-    acc=E_mat['acc'] # 36
-    glove=E_mat['glove'] if not (n=="3") else None
-    stimulus=E_mat['restimulus']
-    repetition=E_mat['rerepetition']
-    return emg, acc, glove, stimulus, repetition
+class MinMaxTracker():
+    def __init__(self):
+        self.min=np.inf
+        self.max=-np.inf
+
+    def push(self, val):
+        self.min=min(val, self.min)
+        self.max=max(val, self.max)
+
+class Glover():
+    def __init__(self):
+        self.path="/home/breezy/Downloads/"
+        # from 28 to 68
+        self.GLOVE_PEOPLE=np.arange(28,67,dtype=np.uint8)
+        # for the minimum length of the thing
+        self.task_cumsum=TASK_DIST.cumsum()
+        self.device=torch.device("cuda")
+        self.angle_idxs=np.arange(22, dtype=np.uint8)
+        # no angle index 5 -> nans, or 10 -> noisy
+        self.angle_idxs=np.delete(self.angle_idxs, [5,10])
+
+    def get_np(self, p_dir, n):
+        E_mat=sio.loadmat("/home/breezy/Downloads/s_%s_angles/S%s_E%s_A1"%(p_dir,p_dir,n))
+        angles=E_mat['angles'][:, self.angle_idxs]
+        stimulus=E_mat['restimulus']
+        repetition=E_mat['rerepetition']
+        return angles, stimulus, repetition
+
+    def get_person_dat(self, person):
+        self.E1=self.get_np(str(person+1), "1")
+        self.E2=self.get_np(str(person+1), "2")
+        self.Es=(self.E1,self.E2)
+
+    def get_task(self, stim):
+        ex=np.searchsorted(self.task_cumsum, stim)
+        angles,stimulus,repetition=self.Es[ex]
+        mask=(stimulus==stim)
+        reps_angles=[angles[(mask&(repetition==rep)).flatten()][:GLOVE_WINDOW_SIZE] for rep in range(1,repetition.max()+1)]
+        angles=np.concatenate(np.array(reps_angles),axis=0)
+        return angles
+
+    def save(self):
+        torch.save(torchize(self.GLOVE), PATH_DIR+'data/glove.pt')
+
+    def load_stored(self):
+        self.GLOVE=torch.load(PATH_DIR+'data/glove.pt', map_location=self.device)
+        self.GLOVE.cuda()
+        print("Loading stored glove...", self.GLOVE.shape)
+        return self.GLOVE
+
+    def load_dataset(self):
+        dats=[]
+        self.stats = RunningStats(PATH_DIR+"data/glove_")
+
+        for person in tqdm(self.GLOVE_PEOPLE):
+            self.get_person_dat(person)
+            all_tasks=[]
+            for stim in range(len(TASKS)+1):
+                dat=self.get_task(stim)
+                all_tasks.append(dat)
+            all_tasks=np.array(all_tasks)
+            dats.append(all_tasks)
+            self.stats.push(all_tasks[TRAIN_TASKS].reshape(-1,GLOVE_DIM))
+
+        self.GLOVE = np.concatenate(dats, axis=1)
+        print("Glove shape:", self.GLOVE.shape)
+        print("Normalizing glove...")
+        self.GLOVE=self.stats.normalize(self.GLOVE)
+        print("Glove normalized.")
+        self.save()
+        print("Glove (un)loaded successfully")
+
+
+    def slice_batch(self, task, idx):
+        # NOT task_idx
+        # If the index is above the length, loop back around
+        return self.GLOVE[task, idx%self.GLOVE.shape[1]]
 

@@ -10,7 +10,7 @@ from constants import *
 from models import Model
 from pprint import pprint
 from time import time
-from utils import Sampler
+from utils import TaskWrapper
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 
@@ -27,10 +27,9 @@ def test(model, dataset):
     #loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, sampler=Sampler(dataset, args.batch_size))
     loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
-    for (EMG, label) in loader:
-        EMG=EMG.squeeze(0)
-        label=label.squeeze(0)
-        EMG=EMG.to(torch.float32)
+    for (EMG, GLOVE) in loader:
+        EMG=EMG.reshape(-1,1,1,EMG_DIM)
+        label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(args.batch_size,dataset.TASKS).flatten()
         with torch.no_grad():
             with amp.autocast():
                 logits=model.forward(EMG)
@@ -47,17 +46,15 @@ def validate(model, dataset):
     total_tasks=dataset.TASKS
 
     total_loss = []
-    #loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, sampler=Sampler(dataset, args.batch_size))
     loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
-    for (EMG, label) in loader:
-        EMG=EMG.squeeze(0)
-        label=label.squeeze(0)
-        EMG=EMG.to(torch.float32)
+    for (EMG, GLOVE) in loader:
+        EMG=EMG.reshape(-1,1,1,EMG_DIM)
+        label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(args.batch_size,dataset.TASKS).flatten()
         with torch.no_grad():
             with amp.autocast():
-                features=model.forward(EMG)
-                loss=model.loss(features, label)
+                logits=model.forward(EMG)
+                loss=model.loss(logits, label)
                 total_loss.append(loss.item())
 
     acc=model.correct_glove()
@@ -81,7 +78,6 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     dataset.set_train()
     total_tasks = dataset.TASKS
 
-    #loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, sampler=Sampler(dataset, args.batch_size))
     loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
     val_losses={}
@@ -90,14 +86,10 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     print("Training...")
     for e in trange(params['epochs']):
         
-        model.set_train()
-        dataset.set_train()
-        # create new 
         loss_train=[]
-        for (EMG, label) in tqdm(loader):
-            EMG=EMG.squeeze(0)
-            label=label.squeeze(0)
-            EMG=EMG.to(torch.float32)
+        for (EMG, GLOVE) in loader:
+            EMG=EMG.reshape(-1,1,1,EMG_DIM)
+            label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(args.batch_size,dataset.TASKS).flatten()
             with amp.autocast():
                 logits=model.forward(EMG)
                 loss=model.loss(logits, label)
@@ -123,6 +115,10 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
             print("Checkpointing model...")
             torch.save(model.state_dict(), checkpoint_dir+"%d.pt"%counter)
             counter+=1
+
+        model.set_train()
+        dataset.set_train()
+
 
     if not verbose:
         loss_val,acc_val=validate(model, dataset)
@@ -163,13 +159,14 @@ def cross_validate(lrs, regs, des, dps, dataset, epochs=6, save=True, load=False
 
 def main(args):
     # DATASET - this is just for loading, change at will (no need to resample)
-    new_people=4
+    new_people=5
     new_tasks=4
 
     dataset23 = DB23()
     print("Loading dataset")
     dataset23.load_stored()
     print("Dataset loaded")
+    dataset23=TaskWrapper(dataset23)
 
     #lrs = [1e-4]*args.crossval_size
     #regs = 10**np.random.uniform(low=-8, high=0, size=(args.crossval_size,))
