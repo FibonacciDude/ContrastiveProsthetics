@@ -14,6 +14,11 @@ from utils import TaskWrapper
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 
+import line_profiler, builtins, atexit
+profile=line_profiler.LineProfiler()
+atexit.register(profile.print_stats)
+#builtins.__dict__['profile']=prof
+
 torch.manual_seed(42)
 torch.backends.cudnn.benchmark=True
 shuff=True
@@ -27,9 +32,10 @@ def test(model, dataset):
     #loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, sampler=Sampler(dataset, args.batch_size))
     loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
-    for (EMG, GLOVE) in loader:
+    for (EMG, GLOVE, label) in loader:
+        #label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(EMG.shape[0],dataset.TASKS).flatten()
+        label=label.reshape(-1)
         EMG=EMG.reshape(-1,1,1,EMG_DIM)
-        label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(args.batch_size,dataset.TASKS).flatten()
         with torch.no_grad():
             with amp.autocast():
                 logits=model.forward(EMG)
@@ -48,9 +54,10 @@ def validate(model, dataset):
     total_loss = []
     loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
-    for (EMG, GLOVE) in loader:
+    for (EMG, GLOVE, label) in tqdm(loader):
+        #label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(EMG.shape[0],dataset.TASKS).flatten()
+        label=label.reshape(-1)
         EMG=EMG.reshape(-1,1,1,EMG_DIM)
-        label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(args.batch_size,dataset.TASKS).flatten()
         with torch.no_grad():
             with amp.autocast():
                 logits=model.forward(EMG)
@@ -77,6 +84,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     # train data
     dataset.set_train()
     total_tasks = dataset.TASKS
+    model.set_train()
 
     loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
@@ -87,9 +95,11 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     for e in trange(params['epochs']):
         
         loss_train=[]
-        for (EMG, GLOVE) in loader:
+        t=time()
+        for (EMG, GLOVE, label) in tqdm(loader):
+            #label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(EMG.shape[0],dataset.TASKS).flatten()
+            label=label.reshape(-1)
             EMG=EMG.reshape(-1,1,1,EMG_DIM)
-            label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(args.batch_size,dataset.TASKS).flatten()
             with amp.autocast():
                 logits=model.forward(EMG)
                 loss=model.loss(logits, label)

@@ -7,6 +7,10 @@ from scipy import signal
 import scipy.io as sio
 from tqdm import tqdm
 
+import line_profiler, builtins, atexit
+profile=line_profiler.LineProfiler()
+atexit.register(profile.print_stats)
+
 torch.manual_seed(42)
 
 def torchize(X):
@@ -16,13 +20,19 @@ class TaskWrapper():
     def __init__(self, dataset):
         self.dataset=dataset
         self.device=torch.device("cuda")
-        self.reset()
+        # you need to set_....() in order to make it create rand
+        #self.reset()
         
-    def reset(self):
-        self.rand_idxs = torch.empty((self.dataset.TASKS, self.dataset.D), device=self.device, dtype=torch.long)
+    def return_rand(self, D):
+        self.rand = torch.empty((self.dataset.TASKS, D), device=self.device, dtype=torch.long)
         for t in range(self.dataset.TASKS):
-            self.rand_idxs[t] = torch.randperm(self.dataset.D, dtype=torch.long, device=self.device)
-        # tasks x d
+            self.rand[t] = torch.randperm(D, dtype=torch.long, device=self.device)+D*t
+        return self.rand
+
+    def reset(self):
+        self.emg_rand=self.return_rand(self.dataset.D)
+        self.glove_rand=self.return_rand(self.dataset.glover.D)
+        self.idx=torch.randperm(self.dataset.TASKS*self.dataset.D, device=self.device, dtype=torch.long)
 
     def __getattr__(self, name):
         #def method(*args, **kwargs):
@@ -33,26 +43,21 @@ class TaskWrapper():
         return self.dataset.D
 
     def __getitem__(self, idx):
-        tensor_emg = torch.empty((self.dataset.TASKS,1,1,EMG_DIM), dtype=self.dataset.EMG.dtype, device=self.device)
-        tensor_glove = torch.empty((self.dataset.TASKS,1,1,GLOVE_DIM), dtype=self.dataset.glover.GLOVE.dtype, device=self.device)
-        for task_idx, task in enumerate(self.dataset.tasks_mask):
-            tensor_emg[task_idx]=self.dataset.__getitem__(task_idx, self.rand_idxs[task_idx, idx])
-            tensor_glove[task_idx]=self.dataset.glover.slice_batch(task, self.rand_idxs[task_idx, idx])
-        return tensor_emg, tensor_glove
+        tensor_emg = self.dataset[self.emg_rand[:, idx]]
+        label=torch.arange(self.dataset.TASKS, device=self.device, dtype=torch.long)
+        tensor_glove = self.dataset.glover[self.glove_rand[:, idx%self.dataset.glover.D]]
+        return tensor_emg, tensor_glove, label
 
     def set_train(self):
-        self.dataset.train=True
-        self.dataset.val=False
+        self.dataset.set_train()
         self.reset()
 
     def set_val(self):
-        self.dataset.train=False
-        self.dataset.val=True
+        self.dataset.set_val()
         self.reset()
 
     def set_test(self):
-        self.dataset.train=False
-        self.dataset.val=False
+        self.dataset.set_test()
         self.reset()
 
 # https://www.johndcook.com/blog/standard_deviation/
@@ -225,9 +230,10 @@ class Glover():
         self.save()
         print("Glove (un)loaded successfully")
 
+    def load_valid(self, tasks_mask):
+        tensor=self.GLOVE[tasks_mask]
+        self.D=self.GLOVE.shape[1]
+        self.GLOVE_use=tensor.reshape(-1, GLOVE_DIM)
 
-    def slice_batch(self, task, idx):
-        # NOT task_idx
-        # If the index is above the length, loop back around
-        return self.GLOVE[task, idx%self.GLOVE.shape[1]]
-
+    def __getitem__(self, idx):
+        return self.GLOVE_use[idx]
