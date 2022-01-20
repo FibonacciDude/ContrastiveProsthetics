@@ -47,18 +47,25 @@ class DB23(data.Dataset):
     def set_train(self):
         self.train=True
         self.val=False
+        self.load_valid()
 
     def set_val(self):
         self.train=False
         self.val=True
+        self.load_valid()
 
     def set_test(self):
         self.train=False
         self.val=False
+        self.load_valid()
+
 
     def load_stored(self):
         self.EMG=torch.load(PATH_DIR+'data/emg.pt', map_location=self.device)
         self.EMG.cuda()
+        # transpose for indexing
+        # people x tasks x ... -> tasks x people x ...
+        self.EMG=self.EMG.transpose(0,1)
         print("Loading stored emg...", self.EMG.shape)
         self.GLOVE=self.glover.load_stored()
 
@@ -102,6 +109,7 @@ class DB23(data.Dataset):
 
         global args
         print("People:", PEOPLE)
+        print("Tasks (not including rest):" ,TASKS)
         self.time_mask=np.arange(0,TOTAL_WINDOW_SIZE,FACTOR,dtype=np.uint8)
         self.emg_stats=RunningStats(PATH_DIR+"data/emg_", complete=True)
         shape=(len(PEOPLE), MAX_TASKS+1,MAX_REPS,len(self.time_mask))
@@ -122,7 +130,7 @@ class DB23(data.Dataset):
             E2=self.get_np(dbnum,p_dir,"2")
             self.Es = (E1, E2)
 
-            for rep in range(0,MAX_REPS):
+            for rep in range(MAX_REPS):
                 for stim in range(MAX_TASKS+1):
                     emg=self.get_stim_rep(stim,rep+1)
                     # only add if in the training set
@@ -140,8 +148,10 @@ class DB23(data.Dataset):
         #save
         self.save(EMG)
         print("Dataset (un)loading completed successfully")
-        # now glover's turn
-        self.glover.load_dataset()
+        
+        if not args.no_glove:
+            # now glover's turn
+            self.glover.load_dataset()
         
     @property
     def PEOPLE(self):
@@ -155,11 +165,11 @@ class DB23(data.Dataset):
     @property
     def REPS(self):
         if self.train:
-            return MAX_TRAIN_REPS-1
+            return len(self.rep_train)
         elif self.val:
-            return 1
+            return len(self.rep_val)
         else:
-            return MAX_REPS
+            return len(self.rep_test) 
 
     @property
     def OUTPUT_DIM(self):
@@ -173,32 +183,45 @@ class DB23(data.Dataset):
 
     @property
     def tasks_mask(self):
-        # TODO: add all tasks at test time (take this out)
-        tasks_mask=self.tasks_train # if (self.train or self.val) else self.tasks
-        tasks_mask=torch.cat((tasks_mask, torchize([0])))
-        return tasks_mask
+        tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
+        return torch.cat((tasks_mask, torchize([0])))
+
+    @property
+    def people_mask(self):
+        return self.people_train if (self.train or self.val) else self.people_test
+
+    @property
+    def rep_mask(self):
+        if self.train:
+            return self.rep_train
+        elif self.val:
+            return self.rep_val
+            #return self.rep_train
+        else:
+            return self.rep_test
+
+    def load_valid(self):
+        tensor=self.EMG[self.tasks_mask][:, self.people_mask][:, :, self.rep_mask]
+        tensor=tensor[:, :, :, :self.OUTPUT_DIM]
+        #print(tensor.shape, tensor.reshape(-1, EMG_DIM)[4])
+        self.EMG_use=tensor.reshape(-1, EMG_DIM)
+        self.glover.load_valid(self.tasks_mask)
+        #print(self.val, "vali")
+        #print(self.EMG_use[4], self.val)
 
     def __len__(self):
         return self.TASKS*self.D
 
-    def slice_batch(self, task_idx, people_rep_output_idx):
-        #task_idx = idx // self.D
-        #people_rep_output_idx = idx % self.D
-        people_idx = people_rep_output_idx // (self.REPS * self.OUTPUT_DIM)
-        rep_output_idx = people_rep_output_idx % (self.REPS * self.OUTPUT_DIM)
-        tensor = self.EMG[people_idx, self.tasks_mask][task_idx]
-        tensor = tensor.reshape(-1, EMG_DIM)[rep_output_idx]
-        # now we have only one slice, convert to an image
-        tensor = tensor.reshape(1, 1, EMG_DIM)
-        label = torchize(task_idx)
-        return tensor, label
+    def slice_batch(self, idx):
+        # every self.D is a new task
+        tensor = self.EMG_use[idx].reshape(-1, 1, 1, EMG_DIM)
+        return tensor
 
-    def __getitem__(self, task_idx, people_rep_output_dim):
+    def __getitem__(self, idx):
         if self.raw:
             return self.EMG
-        EMG, label=self.slice_batch(task_idx, people_rep_output_dim)
-        return EMG #,label
-
+        EMG=self.slice_batch(idx)
+        return EMG
 
 def load(db,glove=False):
     db.load_dataset(glove=glove)
@@ -236,6 +259,7 @@ if __name__=="__main__":
     parser.add_argument('--load_glove', action='store_true')
     parser.add_argument('--viz', action='store_true')
     parser.add_argument('--info', action='store_true')
+    parser.add_argument('--no_glove', action='store_true')
     args = parser.parse_args()
 
     db=DB23()

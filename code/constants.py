@@ -33,7 +33,7 @@ TRAIN_PEOPLE=PEOPLE[:-NEW_PEOPLE]
 MAX_PEOPLE_TRAIN=MAX_PEOPLE-NEW_PEOPLE
 MAX_PEOPLE_TEST=NEW_PEOPLE
 
-TASKS=np.array(list(range(40)), dtype=np.uint8)
+TASKS=np.array(list(range(1,41)), dtype=np.uint8)
 np.random.shuffle(TASKS)
 TEST_TASKS=TASKS[-NEW_TASKS:]
 TRAIN_TASKS=TASKS[:-NEW_TASKS]
