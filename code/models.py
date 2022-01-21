@@ -3,11 +3,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from constants import *
-from utils import RunningStats
+from utils import *
 
 #torch.autograd.set_detect_anomaly(True)
 
 # adaptive batch normalization - https://doi.org/10.1016/j.patcog.2018.03.005
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+np.random.seed(42)
+torch.backends.cudnn.determinist=True
+
 class AdaBatchNorm1d(nn.Module):
     # No code for the online mean/std at test time yet...
     def __init__(self, num_features, device="cuda"):
@@ -58,16 +63,18 @@ class LocalLinear(nn.Module):
 
 # modeled after https://github.com/openai/CLIP/blob/main/clip/model.py
 class Model(nn.Module):
-    def __init__(self, d_e, dp=.5, adabn=True, train_model=True, device="cuda"):
+    def __init__(self, params, adabn=True, train_model=True, prediction=False, glove=False, device="cuda"):
         super(Model,self).__init__()
 
+        self.params=params
         self.train_model = train_model
-        self.d_e = d_e
         self.adabn=adabn
+        self.prediction=prediction
+        self.glove=glove
         self.device = torch.device(device)
 
-        self.emg_net = EMGNet(d_e=d_e, dp=dp, adabn=adabn) # emg model
-        self.glove_net = GLOVENet(d_e=d_e, dp=dp, adabn=adabn) # glove model
+        self.emg_net = EMGNet(d_e=params['d_e'], dp=params['dp'], adabn=adabn, prediction=prediction) 
+        self.glove_net = GLOVENet(d_e=params['d_e'], dp=params['dp_2'], adabn=adabn, prediction=prediction) 
 
         self.loss_f = torch.nn.functional.cross_entropy
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1)/0.07)
@@ -79,47 +86,89 @@ class Model(nn.Module):
     def set_train(self):
         self.train_model=True
         self.train()
+        self.reset()
 
     def set_test(self):
         self.train_model=False
         self.eval()
+        self.reset()
 
     def set_val(self):
         self.set_test() # same behavior
 
+    def reset(self):
+        self.corrects = []
+
     def encode_emg(self, EMG):
         return self.emg_net(EMG)
 
-    def forward(self, EMG):#, GLOVE):
-        emg_features = self.encode_emg(EMG)
-        emg_features = emg_features / emg_features.norm(dim=-1,keepdim=True)
-        return emg_features
+    def encode_glove(self, GLOVE):
+        return self.glove_net(GLOVE)
 
-    def loss(self, features, labels):
-        loss = self.loss_f(features, labels)
-        correct = (F.softmax(features, dim=-1).detach().cpu().numpy().argmax(-1)==labels.cpu().numpy()).mean()
-        if self.train_model:
-            self.correct_v = []
-            self.correct_tr.append(correct.item())
+    def forward(self, EMG, GLOVE):
+        if self.prediction:
+            if self.glove:
+                features = self.encode_glove(GLOVE)
+            else:
+                features = self.encode_emg(EMG)
+            features = features / features.norm(dim=-1,keepdim=True)
+            return features
         else:
-            self.correct_tr = []
-            self.correct_v.append(correct.item())
+            emg_features = self.encode_emg(EMG)
+            emg_features = emg_features / emg_features.norm(dim=-1,keepdim=True)
+            glove_features = self.encode_glove(GLOVE)
+            glove_features = glove_features / glove_features.norm(dim=-1,keepdim=True)
+            # becomes (N, d_e, tasks)
+            glove_features_t = glove_features.transpose(1,2)
+            # (N, tasks_e, d_e) x (N, d_e, tasks_g) -> (N, tasks_e, tasks_g)
+            logits=torch.bmm(emg_features * 100, glove_features_t * 100) * self.logit_scale
+            return logits
+
+    def contrastive_loopy_loss(self, logits, labels, acc=False):
+        loss=torchize([0])
+        correct=torchize([0]).to(torch.float)
+        for log in logits:
+            loss = loss + self.loss_f(log, labels[:log.shape[0]])
+            if acc:
+                correct += (F.softmax(log, dim=-1).detach().cpu().numpy().argmax(-1)==labels[:log.shape[0]].cpu().numpy()).mean()
+        loss=loss/np.prod(logits.shape[0])
+        if acc:
+            # correct for the values we want (predicting grasp from emg)
+            correct=correct/logits.shape[0]
+            self.corrects.append(correct.item())
+        return loss
+
+    def prediction_loss(self, logits, labels):
+        loss=self.loss_f(logits, labels)
+        correct = (F.softmax(logits, dim=-1).detach().cpu().numpy().argmax(-1)==labels.cpu().numpy()).mean()
+        self.corrects.append(correct.item())
+        return loss
+        
+    def loss(self, logits, labels):
+        if self.prediction:
+            loss=self.prediction_loss(logits, labels)
+        else:
+            # loopy-loopy first, then vectorized
+            loss_e=self.contrastive_loopy_loss(logits, labels, acc=True)
+            # tasks_e x tasks_g -> tasks_g x tasks_e
+            loss_g=self.contrastive_loopy_loss(torch.transpose(logits,1,2), labels)
+            loss=(loss_e+loss_g)/2
         return loss
 
     def correct_glove(self):
-        if self.train_model:
-            return np.array(self.correct_tr).mean()
-        return np.array(self.correct_v).mean()
+        return np.array(self.corrects).mean()
 
     def l2(self):
-        return self.emg_net.l2()
+        return self.emg_net.l2()*self.params['l2']+self.glove_net.l2()*self.params['l2_2']
 
 class EMGNet(nn.Module):
-    def __init__(self, d_e, dp=.5, adabn=True, train=True, device="cuda"):
+    def __init__(self, d_e, dp=.5, adabn=True, train=True, prediction=False, device="cuda"):
         super(EMGNet,self).__init__()
         self.device=torch.device(device)
         self.d_e=d_e
         self.dp=dp
+        self.prediction=prediction
+
         if adabn:
             self.bn1d_func = AdaBatchNorm1d
             self.bn2d_func = AdaBatchNorm2d
@@ -132,15 +181,15 @@ class EMGNet(nn.Module):
 
         self.conv_emg=nn.Sequential(
                 # conv -> bn -> relu
-                #self.bn2d_func(1),
+                self.bn2d_func(1),
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
-                nn.Conv2d(1,64,(3,3),padding=(1,1)),
+                nn.Conv2d(1,64,(1,3),padding=(0,1)),
                 nn.ReLU(),
                 self.bn2d_func(64),
 
-                nn.Conv2d(64,64,(3,3),padding=(1,1)),
+                nn.Conv2d(64,64,(1,3),padding=(0,1)),
                 nn.ReLU(),
                 self.bn2d_func(64),
                 nn.Flatten(),
@@ -164,20 +213,34 @@ class EMGNet(nn.Module):
                 nn.ReLU(), 
                 self.bn1d_func(512),
                 nn.Dropout(self.dp),
-
-                nn.Linear(512, 128),
-                nn.ReLU(),
-                self.bn1d_func(128),
-                nn.Dropout(self.dp),
-
-                nn.Linear(128, 37),
                 )
+
+        if self.prediction:
+            self.last = nn.Sequential(
+                    nn.Linear(512, 128),
+                    nn.ReLU(),
+                    self.bn1d_func(128),
+                    nn.Dropout(self.dp),
+
+                    # TODO: fix, we assume we know this beforehand
+                    nn.Linear(128, 37),
+                    )
+        else:
+            self.last = nn.Sequential(
+                    # projection
+                    nn.Linear(512, self.d_e, bias=False),
+                    )
 
         self.to(self.device)
 
     def forward(self, EMG):
-        out=self.conv_emg(EMG)
+        out=EMG.reshape(-1, 1, 1, EMG_DIM)
+        out=self.conv_emg(out)
         out=self.linear(out)
+        if not self.prediction:
+            # reshape back
+            out=out.reshape((EMG.shape[0], EMG.shape[1], -1))
+        out=self.last(out)
         return out
 
     def l2(self):
@@ -189,11 +252,12 @@ class EMGNet(nn.Module):
 
 
 class GLOVENet(nn.Module):
-    def __init__(self, d_e, dp=.5, adabn=True, train=True, device="cuda"):
+    def __init__(self, d_e, dp=.5, adabn=True, train=True, prediction=False, device="cuda"):
         super(GLOVENet,self).__init__()
         self.device=torch.device(device)
         self.d_e=d_e
         self.dp=dp
+        self.prediction=prediction
         if adabn:
             self.bn1d_func = AdaBatchNorm1d
             self.bn2d_func = AdaBatchNorm2d
@@ -206,15 +270,14 @@ class GLOVENet(nn.Module):
 
         self.conv_glove=nn.Sequential(
                 # conv -> bn -> relu
-                #self.bn2d_func(1),
-
+                self.bn2d_func(1),
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
-                nn.Conv2d(1,64,(3,3),padding=(1,1)),
+                nn.Conv2d(1,64,(1,3),padding=(0,1)),
                 nn.ReLU(),
                 self.bn2d_func(64),
 
-                nn.Conv2d(64,64,(3,3),padding=(1,1)),
+                nn.Conv2d(64,64,(1,3),padding=(0,1)),
                 nn.ReLU(),
                 self.bn2d_func(64),
                 nn.Flatten(),
@@ -228,30 +291,40 @@ class GLOVENet(nn.Module):
                 nn.Linear(512, 512),
                 nn.ReLU(),
                 self.bn1d_func(512),
-
-                nn.Linear(512, 512),
-                nn.ReLU(),
-                self.bn1d_func(512),
                 nn.Dropout(self.dp),
 
                 nn.Linear(512, 512),
                 nn.ReLU(), 
                 self.bn1d_func(512),
                 nn.Dropout(self.dp),
-
-                nn.Linear(512, 128),
-                nn.ReLU(),
-                self.bn1d_func(128),
-                nn.Dropout(self.dp),
-
-                nn.Linear(128, 37),
                 )
+
+        if self.prediction:
+            self.last = nn.Sequential(
+                    nn.Linear(512, 128),
+                    nn.ReLU(),
+                    self.bn1d_func(128),
+                    nn.Dropout(self.dp),
+
+                    # TODO: fix, we assume we know this beforehand
+                    nn.Linear(128, 37),
+                    )
+        else:
+            self.last = nn.Sequential(
+                    # projection
+                    nn.Linear(512, self.d_e, bias=False),
+                    )
 
         self.to(self.device)
 
     def forward(self, GLOVE):
-        out=self.conv_emg(GLOVE)
+        out=GLOVE.reshape(-1, 1, 1, GLOVE_DIM)
+        out=self.conv_glove(out)
         out=self.linear(out)
+        if not self.prediction:
+            # reshape back
+            out=out.reshape((GLOVE.shape[0], GLOVE.shape[1], -1))
+        out=self.last(out)
         return out
 
     def l2(self):
