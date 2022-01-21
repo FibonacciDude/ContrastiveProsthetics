@@ -16,6 +16,8 @@ except RuntimeError:
     pass
 
 torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+np.random.seed(42)
 
 class DB23(data.Dataset):
     def __init__(self, train=True, val=False):
@@ -155,12 +157,12 @@ class DB23(data.Dataset):
         
     @property
     def PEOPLE(self):
-        return MAX_PEOPLE_TRAIN if (self.train or self.val) else MAX_PEOPLE_TEST #MAX_PEOPLE 
+        return len(self.people_mask)
 
     @property
     def TASKS(self):
         # TODO: add all tasks at test time (take this out)
-        return MAX_TASKS_TRAIN+1 #if (self.train or self.val) else MAX_TASKS+1
+        return len(self.tasks_mask)
 
     @property
     def REPS(self):
@@ -183,12 +185,16 @@ class DB23(data.Dataset):
 
     @property
     def tasks_mask(self):
-        tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
+        #tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
+        # TODO: change back to all tasks
+        #tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks_test[:1]
+        tasks_mask=self.tasks_train
         return torch.cat((tasks_mask, torchize([0])))
 
     @property
     def people_mask(self):
-        return self.people_train if (self.train or self.val) else self.people_test
+        return self.people_train if (self.train or self.val) else self.people
+        #return self.people_train if (self.train or self.val) else torch.cat((self.people_test, torch.tensor([self.people_test[3]]*(MAX_PEOPLE_TRAIN-MAX_PEOPLE_TEST), device=torch.device("cuda")))).reshape(-1)
 
     @property
     def rep_mask(self):
@@ -203,11 +209,8 @@ class DB23(data.Dataset):
     def load_valid(self):
         tensor=self.EMG[self.tasks_mask][:, self.people_mask][:, :, self.rep_mask]
         tensor=tensor[:, :, :, :self.OUTPUT_DIM]
-        #print(tensor.shape, tensor.reshape(-1, EMG_DIM)[4])
         self.EMG_use=tensor.reshape(-1, EMG_DIM)
         self.glover.load_valid(self.tasks_mask)
-        #print(self.val, "vali")
-        #print(self.EMG_use[4], self.val)
 
     def __len__(self):
         return self.TASKS*self.D

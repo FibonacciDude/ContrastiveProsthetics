@@ -37,6 +37,7 @@ TASKS=np.array(list(range(1,41)), dtype=np.uint8)
 np.random.shuffle(TASKS)
 TEST_TASKS=TASKS[-NEW_TASKS:]
 TRAIN_TASKS=TASKS[:-NEW_TASKS]
+print(TEST_TASKS)
 TASK_DIST=np.array([17,23])
 MAX_TASKS=TASK_DIST.sum()
 

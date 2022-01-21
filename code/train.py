@@ -19,8 +19,10 @@ profile=line_profiler.LineProfiler()
 atexit.register(profile.print_stats)
 #builtins.__dict__['profile']=prof
 
-torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+np.random.seed(42)
 torch.backends.cudnn.benchmark=True
+torch.backends.cudnn.determinist=True
 shuff=True
 
 def test(model, dataset):
@@ -33,14 +35,12 @@ def test(model, dataset):
     loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
     for (EMG, GLOVE, label) in loader:
-        #label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(EMG.shape[0],dataset.TASKS).flatten()
         label=label.reshape(-1)
-        EMG=EMG.reshape(-1,1,1,EMG_DIM)
         with torch.no_grad():
-            with amp.autocast():
-                logits=model.forward(EMG)
-                loss=model.loss(logits, label)
-                total_loss.append(loss.item())
+            #with amp.autocast():
+            logits=model.forward(EMG, GLOVE)
+            loss=model.loss(logits, label)
+            total_loss.append(loss.item())
 
     acc=model.correct_glove()
     mean_loss=np.array(total_loss).mean()
@@ -55,21 +55,19 @@ def validate(model, dataset):
     loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
     for (EMG, GLOVE, label) in tqdm(loader):
-        #label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(EMG.shape[0],dataset.TASKS).flatten()
         label=label.reshape(-1)
-        EMG=EMG.reshape(-1,1,1,EMG_DIM)
         with torch.no_grad():
-            with amp.autocast():
-                logits=model.forward(EMG)
-                loss=model.loss(logits, label)
-                total_loss.append(loss.item())
+            #with amp.autocast():
+            logits=model.forward(EMG, GLOVE)
+            loss=model.loss(logits, label)
+            total_loss.append(loss.item())
 
     acc=model.correct_glove()
     mean_loss=np.array(total_loss).mean()
     return mean_loss, acc
 
 def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints/model", annealing=False, load=None, verbose=False):
-    model = Model(d_e=params['d_e'], dp=params['dp'], train_model=True, adabn=args.no_adabn, device="cuda").to(torch.float32)
+    model = Model(params=params, train_model=True, adabn=args.no_adabn, prediction=args.prediction, glove=args.glove, device="cuda").to(torch.float32)
 
     if load is not None:
         print("Loading model")
@@ -97,14 +95,13 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         loss_train=[]
         t=time()
         for (EMG, GLOVE, label) in tqdm(loader):
-            #label=torch.arange(dataset.TASKS, dtype=torch.long, device=torch.device("cuda")).expand(EMG.shape[0],dataset.TASKS).flatten()
             label=label.reshape(-1)
-            EMG=EMG.reshape(-1,1,1,EMG_DIM)
-            with amp.autocast():
-                logits=model.forward(EMG)
-                loss=model.loss(logits, label)
-                loss_train.append(loss.item())
-                loss=loss+model.l2()*params['l2']
+            #with amp.autocast():
+            logits=model.forward(EMG, GLOVE)
+            loss=model.loss(logits, label)
+            loss_train.append(loss.item())
+            loss=loss+model.l2()*params['l2']
+            #torch.nn.utils.clip_grad_norm_(model.parameters(), 10)
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -139,22 +136,24 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
     return final_val_acc, model
 
-def cross_validate(lrs, regs, des, dps, dataset, epochs=6, save=True, load=False):
+def cross_validate(lrs, regs, des, dps, regs_2, dps_2, dataset, epochs=6, save=True, load=False):
     cross_val={}
     if not load:
         for d_e in des:
             for i in range(len(lrs)):
-                lr, reg, dp = lrs[i], regs[i], dps[i]
-                print("d_e: %s, lr: %s, reg: %s, dp: %s"%(str(d_e),str(lr),reg, str(dp)))
+                lr, reg, dp, reg_2, dp_2 = lrs[i], regs[i], dps[i], regs_2[i], dps_2[i]
+                print("d_e: %s, lr: %s, reg: %s, dp: %s, reg_2: %s, dp_2: %s"%(str(d_e),str(lr),str(reg), str(dp), str(reg_2), str(dp_2)))
                 params = {
                         'd_e' : d_e,
                         'epochs' : epochs,
                         'lr' : lr,
                         'l2' : reg,
                         'dp' : dp,
+                        'dp_2' : dp_2,
+                        'l2_2' : reg_2
                         }
                 (loss_t,acc_t),model=train_loop(dataset, params, checkpoint=False, verbose=False)
-                cross_val[(int(d_e), lr, reg, dp)]=(loss_t,acc_t)
+                cross_val[(int(d_e), lr, reg, dp, reg_2, dp_2)]=(loss_t,acc_t)
 
         values = np.array(list(cross_val.values()))
         keys = np.array(list(cross_val.keys()))
@@ -180,12 +179,14 @@ def main(args):
 
     #lrs = [1e-4]*args.crossval_size
     #regs = 10**np.random.uniform(low=-8, high=0, size=(args.crossval_size,))
-    dps = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
     lrs = 10**np.random.uniform(low=-6, high=0, size=(args.crossval_size,))
     regs = 10**np.random.uniform(low=-9, high=1, size=(args.crossval_size,))
-    des=[64]
+    dps = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
+    regs_2 = 10**np.random.uniform(low=-9, high=1, size=(args.crossval_size,))
+    dps_2 = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
+    des=[16]
 
-    values, keys = cross_validate(lrs, regs, des, dps, dataset23, epochs=args.crossval_epochs, save=True, load=args.crossval_load)
+    values, keys = cross_validate(lrs, regs, des, dps, regs_2, dps_2, dataset23, epochs=args.crossval_epochs, save=True, load=args.crossval_load)
 
     # get best
     best_val = np.nanargmax(values[:, 1])
@@ -194,14 +195,16 @@ def main(args):
     #print(sorted(list(values[:, 1])))
 
     # test model
-    d_e, lr, reg, dp = best_key     # best model during validation
+    d_e, lr, reg, dp, reg_2, dp_2 = best_key     # best model during validation
 
     params = {
             'd_e' : int(d_e),
             'epochs' : args.final_epochs,
             'lr' : lr,
             'dp' : dp,
-            'l2' : reg
+            'l2' : reg,
+            'dp_2' : dp_2,
+            'l2_2' : reg_2
             }
 
     print("Final training of model")
@@ -209,10 +212,11 @@ def main(args):
     print("Final validation model statistics")
     print(final_vals)
 
-    # not until very very end
-    #final_stats=test(model, dataset23)
-    #print("loss,\t\t\tcorrect")
-    #print(final_stats)
+    if args.test:
+        # not until very very end
+        final_stats=test(model, dataset23)
+        print("loss,\t\t\tcorrect")
+        print(final_stats)
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Training on ninapro dataset')
@@ -220,10 +224,13 @@ if __name__=="__main__":
     parser.add_argument('--crossval_epochs', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--final_epochs', type=int, default=100)
+    parser.add_argument('--glove', action='store_true')
     parser.add_argument('--crossval_load', action='store_true')
+    parser.add_argument('--prediction', action='store_true')
     parser.add_argument('--no_adabn', action='store_false')
     parser.add_argument('--no_checkpoint', action='store_false')
     parser.add_argument('--no_verbose', action='store_false')
+    parser.add_argument('--test', action='store_true')
     args = parser.parse_args()
 
     main(args)

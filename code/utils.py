@@ -12,6 +12,8 @@ profile=line_profiler.LineProfiler()
 atexit.register(profile.print_stats)
 
 torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+np.random.seed(42)
 
 def torchize(X):
     return torch.from_numpy(np.array(X)).to(torch.device("cuda"))
@@ -44,8 +46,11 @@ class TaskWrapper():
 
     def __getitem__(self, idx):
         tensor_emg = self.dataset[self.emg_rand[:, idx]]
-        label=torch.arange(self.dataset.TASKS, device=self.device, dtype=torch.long)
         tensor_glove = self.dataset.glover[self.glove_rand[:, idx%self.dataset.glover.D]]
+        label=torch.arange(self.dataset.TASKS, device=self.device, dtype=torch.long)
+        # move to half precision
+        tensor_emg=tensor_emg.to(torch.float32)
+        tensor_glove=tensor_glove.to(torch.float32)
         return tensor_emg, tensor_glove, label
 
     def set_train(self):
