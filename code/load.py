@@ -43,7 +43,7 @@ class DB23(data.Dataset):
         self.reps=reps
 
         self.window_mask=torch.randperm(WINDOW_OUTPUT_DIM, device=self.device)
-        self.path="/home/breezy/ULM/prosthetics/db23/"
+        self.path="/home/breezy/hci/prosthetics/db23/"
 
     def set_train(self):
         self.train=True
@@ -59,38 +59,26 @@ class DB23(data.Dataset):
 
     def load_stored(self):
         self.EMG=torch.load(self.path+'data/emg.pt', map_location=self.device)
+        #self.EMG=self.EMG.transpose(0,1)
         self.EMG.cuda()
-        #self.ACC=torch.load(self.path+'data/acc.pt', map_location=self.device)
-        #self.GLOVE=torch.load(self.path+'data/glove.pt', map_location=self.device)
-        #self.ACC.cuda()
-        #self.GLOVE.cuda()
 
     def load_subject(self, subject):
         EMG=self.EMG[subject]
         return EMG
-        #ACC=self.ACC[subject]
-        #GLOVE=self.GLOVE[subject]
 
-    def save(self, tensors):
-        EMG, ACC, GLOVE = tensors
+    def save(self, EMG):
         torch.save(EMG, self.path+'data/emg.pt')
-        torch.save(ACC, self.path+'data/acc.pt')
-        torch.save(GLOVE, self.path+'data/glove.pt')
 
     def get_stim_rep(self, stimulus, repetition):
         # stimulus from 1-40, repetition from 1-6
         ex=np.searchsorted(np.array(TASK_DIST).cumsum(), stimulus)
-        emg, acc, glove, stim, rep = self.Es[ex]
-        # emg, acc, glove, stimulus, repetition
+        emg, stim, rep = self.Es[ex]
         stim_mask, rep_mask=(stim==stimulus), (rep==repetition)
         mask=(stim_mask&rep_mask).squeeze()
 
         # this was removed in https://www.nature.com/articles/s41597-019-0349-2 for noise problems as well
-        glove=np.concatenate((glove[:, :10], glove[:, 11:]), axis=1)
         emg_=emg[mask][:TOTAL_WINDOW_SIZE+2*WINDOW_EDGE]
         # align data with emg
-        acc_=acc[mask][WINDOW_EDGE:TOTAL_WINDOW_SIZE+WINDOW_EDGE]
-        glove_=glove[mask][WINDOW_EDGE:TOTAL_WINDOW_SIZE+WINDOW_EDGE]
 
         # filter raw signal - 20 Hz to 400 Hz
         emg_=filter(emg_*2**10, (20, 400), butterworth_order=4,btype="bandpass") # bandpass filter
@@ -98,31 +86,24 @@ class DB23(data.Dataset):
         emg_=rms(emg_)
 
         emg_=torchize(emg_[self.time_mask])
-        glove_=torchize(glove_[self.time_mask])
-        acc_=torchize(acc_[self.time_mask])
-        return emg_, acc_, glove_
+        return emg_
 
     def load_dataset(self):
         """
         Loads dataset as a pt file format all preprocessed.
-        subject -> reps -> stim -> amt windows -> window_ms -> dim (emg,acc,glove)
+        subject -> reps -> stim -> amt windows -> window_ms -> dim (emg)
         """
         global args
         print("People:", PEOPLE)
         self.time_mask=np.arange(0,TOTAL_WINDOW_SIZE,FACTOR,dtype=np.uint8)
         
-        self.emg_stats=RunningStats(norm=args.norm, complete=True)
-        self.acc_stats=RunningStats(norm=args.norm)
-        self.glove_stats=RunningStats(norm=args.norm)
+        self.emg_stats=RunningStats(norm=args.norm, complete=False)
 
         shape=(len(PEOPLE), MAX_TASKS+1,MAX_REPS,len(self.time_mask))
         EMG=torch.empty(shape+(EMG_DIM,), device=self.device)
-        ACC=torch.empty(shape+(ACC_DIM,), device=self.device)
-        GLOVE=torch.empty(shape+(GLOVE_DIM,), device=self.device)
 
         for i, person in enumerate(tqdm.tqdm(PEOPLE)):
             # gestures go from 1 to 17, 1 to 23, rest (0)
-            # emg, acc, glove, stimulus, repetition
             self.person=person
             dbnum="3" if person >= MAX_PEOPLE_D2 else "2"
             subject=person
@@ -139,35 +120,25 @@ class DB23(data.Dataset):
 
             for rep in range(0,MAX_REPS):
                 for stim in range(MAX_TASKS+1):
-                    emg,acc,glove=self.get_stim_rep(stim,rep+1)
+                    emg=self.get_stim_rep(stim,rep+1)
                     # only add if in the training set
-                    if (person in TRAIN_PEOPLE and rep in self.rep_train and stim in TRAIN_TASKS):
+                    if (person in TRAIN_PEOPLE and rep in self.rep_train and (stim in TRAIN_TASKS or stim==0)):
                         self.emg_stats.push(emg) 
-                        self.acc_stats.push(acc) 
-                        self.glove_stats.push(glove) 
 
                     EMG[i,stim,rep]=emg
-                    ACC[i,stim,rep]=acc
-                    GLOVE[i,stim,rep]=glove 
 
         if args.norm:
             emg_means,emg_std=self.emg_stats.mean_std()
-            acc_means,acc_std=self.acc_stats.mean_std()
-            glove_means,glove_std=self.glove_stats.mean_std()
-            print(emg_std,acc_std,glove_std)
+            print(emg_std)
         else:
             print("Min max normalization:\n")
             print("\tEMG min max:", self.emg_stats.min.item(), self.emg_stats.max.item())
-            print("\tACC min max:", self.acc_stats.min.item(), self.acc_stats.max.item())
-            print("\tGLOVE min max:", self.glove_stats.min.item(), self.glove_stats.max.item())
 
         # normalize
         EMG=self.emg_stats.normalize(EMG)
-        ACC=self.acc_stats.normalize(ACC)
-        GLOVE=self.glove_stats.normalize(GLOVE)
 
         #save
-        self.save((EMG,ACC,GLOVE)) 
+        self.save(EMG)
         print("Dataset (un)loading completed successfully")
 
     @property
@@ -211,13 +182,16 @@ class DB23(data.Dataset):
     def __len__(self):
         return self.PEOPLE*self.TASKS*self.REPS*WINDOW_OUTPUT_DIM
 
-    def slice_batch(self, tensor, DIM, idx):
+    def slice_batch(self, DIM, idx):
         task_idx = idx // (self.PEOPLE * self.REPS * WINDOW_OUTPUT_DIM)
+        #"""
         people_rep_output_idx = idx % (self.PEOPLE * self.REPS * WINDOW_OUTPUT_DIM)
         people_idx = people_rep_output_idx // (self.REPS * WINDOW_OUTPUT_DIM)
         rep_output_idx = people_rep_output_idx % (self.REPS * WINDOW_OUTPUT_DIM)
-        tensor = tensor[people_idx, task_idx]
+        tensor = self.EMG[people_idx, task_idx]
         tensor = tensor.reshape(-1, DIM)[rep_output_idx]
+        #"""
+        
         # now we have only one slice, convert to an image
         tensor = tensor.reshape(1, 1, DIM)
         label = torchize(task_idx)
@@ -225,12 +199,9 @@ class DB23(data.Dataset):
 
     def __getitem__(self, idx):
         if self.raw:
-            return self.EMG,self.ACC,self.GLOVE
-        EMG, label=self.slice_batch(self.EMG, EMG_DIM, idx)
+            return self.EMG
+        EMG, label=self.slice_batch(EMG_DIM, idx)
         return EMG, label
-        #GLOVE=self.slice_batch(self.GLOVE, GLOVE_DIM, idx)
-        #ACC=self.slice_batch(self.ACC, ACC_DIM, idx)
-        #return (EMG,GLOVE,ACC), label
 
 
 def load(db):
@@ -257,10 +228,11 @@ def visualize(db):
     import matplotlib.pyplot as plt
     db.raw=True
     db.set_train()
-    EMG,GLOVE,ACC=db[0]
-    dat=EMG.squeeze(0).expand(100,-1).cpu().numpy()
+    EMG=db[0]
+    dat=EMG[0,0,0,:,:].cpu().numpy()
     dim=EMG_DIM
     for sensor in range(dim):
+        print(dat[:, sensor].max(), sensor)
         plt.plot(dat[:, sensor])
     plt.show()
     
@@ -273,7 +245,7 @@ if __name__=="__main__":
     parser.add_argument('--norm', action='store_false')
     args = parser.parse_args()
 
-    db=DB23(adabn=False)
+    db=DB23()
     if args.load:
         load(db)
     if args.viz:

@@ -137,22 +137,16 @@ def remove_outliers(tensor, dim, low, high, factor=1):
 def clip_es(Es):
     Es_new = []
     for ex in range(2):
-        emg, acc, glove, stim, rep = Es[ex]
+        emg,  stim, rep = Es[ex]
         eh,el=np.percentile(emg, [99.5, .5], axis=0)
-        ah,al=np.percentile(acc, [99.5, .5], axis=0)
-        gh,gl=np.percentile(glove, [99.5, .5], axis=0)
-        glove=remove_outliers(glove, GLOVE_DIM, low=gl, high=gh, factor=1)
-        acc=remove_outliers(acc, ACC_DIM, low=al, high=ah, factor=1)
         emg=remove_outliers(emg, EMG_DIM, low=el, high=eh, factor=1)
-        Es_new.append((emg, acc, glove, stim, rep))
+        Es_new.append((emg, stim, rep))
     return tuple(Es_new)
 
 def get_np(dbnum, p_dir, n):
     E_mat=sio.loadmat("../db%s/s%s/S%s_E%s_A1"%(dbnum,p_dir,p_dir,n))
     emg=E_mat['emg'] # 12
-    acc=E_mat['acc'] # 36
-    glove=E_mat['glove'] if not (n=="3") else None
     stimulus=E_mat['restimulus']
     repetition=E_mat['rerepetition']
-    return emg, acc, glove, stimulus, repetition
+    return emg, stimulus, repetition
 

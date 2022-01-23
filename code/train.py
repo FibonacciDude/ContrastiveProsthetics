@@ -24,7 +24,6 @@ def test(model, dataset):
     total_tasks=dataset.TASKS
 
     total_loss = []
-    #loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, sampler=Sampler(dataset, args.batch_size))
     loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
     for (EMG, label) in loader:
@@ -47,7 +46,6 @@ def validate(model, dataset):
     total_tasks=dataset.TASKS
 
     total_loss = []
-    #loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, sampler=Sampler(dataset, args.batch_size))
     loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
 
     for (EMG, label) in loader:
@@ -188,6 +186,7 @@ def main(args):
 
     # test model
     d_e, lr, reg, dp = best_key     # best model during validation
+    d_e, lr, reg, dp = 64, 8.407761618357412e-05, 0.009335926199496442, 0.1268318024772864
 
     params = {
             'd_e' : int(d_e),
@@ -203,9 +202,9 @@ def main(args):
     print(final_vals)
 
     # not until very very end
-    #final_stats=test(model, dataset23)
-    #print("loss,\t\t\tcorrect")
-    #print(final_stats)
+    final_stats=test(model, dataset23)
+    print("loss,\t\t\tcorrect")
+    print(final_stats)
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Training on ninapro dataset')
