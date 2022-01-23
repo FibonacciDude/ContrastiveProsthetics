@@ -13,6 +13,7 @@ from time import time
 from utils import TaskWrapper
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
+from torchsummary import summary
 
 import line_profiler, builtins, atexit
 profile=line_profiler.LineProfiler()
@@ -62,8 +63,12 @@ def validate(model, dataset):
     mean_loss=np.array(total_loss).mean()
     return mean_loss, acc
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints/model", annealing=False, load=None, verbose=False):
     model = Model(params=params, train_model=True, adabn=args.no_adabn, prediction=args.prediction, glove=args.glove, device="cuda").to(torch.float32)
+    print(count_parameters(model))
 
     if load is not None:
         print("Loading model")

@@ -32,17 +32,12 @@ class DB23(data.Dataset):
         self.tasks=torchize(TASKS)
 
         self.people_train=torchize(TRAIN_PEOPLE_IDXS)
+        self.people_val=torchize(VAL_PEOPLE_IDXS)
         self.people_test=torchize(TEST_PEOPLE_IDXS)
+
         self.people=torchize(PEOPLE_IDXS)
 
-        train_reps = torchize(TRAIN_REPS)
-        test_reps = torchize(TEST_REPS)
-        reps = torchize(REPS)
-
-        self.rep_train=train_reps[:-1]-1
-        self.rep_val=train_reps[-1:]-1
-        self.rep_test=test_reps-1
-        self.reps=reps
+        self.reps=torchize(REPS)-1
 
         # own little dataset
         self.glover=Glover()
@@ -93,11 +88,11 @@ class DB23(data.Dataset):
 
         emg_=emg[mask][:TOTAL_WINDOW_SIZE+2*WINDOW_EDGE]
 
-        # filter raw signal - 20 Hz to 450 Hz
-        emg_=filter(emg_*2**10, (20, 450), butterworth_order=4,btype="bandpass") # bandpass filter
         # rectification might be problematic for real time software
+        # filter raw signal - 20 Hz to 450 Hz
+
+        emg_=filter(emg_, (20, 450), butterworth_order=4,btype="bandpass")
         emg_=rms(emg_)
-        #emg_=np.abs(emg_[WINDOW_EDGE:TOTAL_WINDOW_SIZE+WINDOW_EDGE])
         emg_=torchize(emg_[self.time_mask])
         return emg_
 
@@ -137,8 +132,8 @@ class DB23(data.Dataset):
                 for stim in range(MAX_TASKS):
                     emg=self.get_stim_rep(stim,rep+1)
                     # only add if in the training set
-                    if (person in TRAIN_PEOPLE and rep in self.rep_train and (stim in TRAIN_TASKS or stim==0)):
-                        self.emg_stats.push(emg) 
+                    if (person in TRAIN_PEOPLE and (stim in TRAIN_TASKS or stim==0)):
+                        self.emg_stats.push(emg)
                     EMG[i,stim,rep]=emg
 
         emg_means,emg_std=self.emg_stats.mean_std()
@@ -166,17 +161,16 @@ class DB23(data.Dataset):
 
     @property
     def people_mask(self):
-        return self.people_train if (self.train or self.val) else self.people_test
+        if self.train:
+            return self.people_train
+        elif self.val:
+            return self.people_val
+        else:
+            return self.people_test
 
     @property
     def rep_mask(self):
-        if self.train:
-            return self.rep_train
-        elif self.val:
-            return self.rep_val
-            #return self.rep_train
-        else:
-            return self.rep_test
+        return self.reps
 
     @property
     def PEOPLE(self):
@@ -198,10 +192,11 @@ class DB23(data.Dataset):
     @property
     def OUTPUT_DIM(self):
         if self.train:
-            return int(WINDOW_OUTPUT_DIM)
+            return int(WINDOW_OUTPUT_DIM/3)
         return int(PREDICTION_WINDOW_SIZE)
 
     def load_valid(self):
+        print(self.EMG.shape)
         tensor=self.EMG[self.tasks_mask][:, self.people_mask][:, :, self.rep_mask]
         tensor=tensor[:, :, :, :self.OUTPUT_DIM]
         # tasks x people x rep -> tasks*(people*rep*output_dim)

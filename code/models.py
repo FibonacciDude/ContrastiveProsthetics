@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 from constants import *
 from utils import *
+from torch.nn.modules.utils import _pair
 import ipdb
 
 #torch.autograd.set_detect_anomaly(True)
@@ -42,25 +43,33 @@ class Print(nn.Module):
         print(X.shape)
         return X
 
-class LocalLinear(nn.Module):
-    def __init__(self,in_features,local_features,kernel_size,padding=0,stride=1,bias=True):
-        super(LocalLinear, self).__init__()
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.padding = padding
+class LocallyConnected2d(nn.Module):
+    def __init__(self, in_channels, out_channels, output_size, kernel_size, stride, bias=False):
+        super(LocallyConnected2d, self).__init__()
+        output_size = _pair(output_size)
+        self.weight = nn.Parameter(
+            torch.randn(1, out_channels, in_channels, output_size[0], output_size[1], kernel_size**2)
+        )
+        if bias:
+            self.bias = nn.Parameter(
+                torch.randn(1, out_channels, output_size[0], output_size[1])
+            )
+        else:
+            self.register_parameter('bias', None)
+        self.kernel_size = _pair(kernel_size)
+        self.stride = _pair(stride)
 
-        fold_num = (in_features+2*padding-self.kernel_size)//self.stride+1
-        self.weight = nn.Parameter(torch.randn(fold_num,kernel_size,local_features))
-        self.bias = nn.Parameter(torch.randn(fold_num,local_features)) if bias else None
-
-    def forward(self, x:torch.Tensor):
-        x = F.pad(x,[self.padding]*2,value=0)
-        x = x.unfold(-1,size=self.kernel_size,step=self.stride)
-        x = torch.matmul(x.unsqueeze(2),self.weight).squeeze(2)
+    def forward(self, x):
+        _, c, h, w = x.size()
+        kh, kw = self.kernel_size
+        dh, dw = self.stride
+        x = x.unfold(2, kh, dh).unfold(3, kw, dw)
+        x = x.contiguous().view(*x.size()[:-2], -1)
+        # Sum in in_channel and kernel_size dims
+        out = (x.unsqueeze(1) * self.weight).sum([2, -1])
         if self.bias is not None:
-            x = x + self.bias
-        return x
-
+            out += self.bias
+        return out
 
 # modeled after https://github.com/openai/CLIP/blob/main/clip/model.py
 class Model(nn.Module):
@@ -190,35 +199,46 @@ class EMGNet(nn.Module):
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
-                nn.Conv2d(1,64,(1,3),padding=(0,1)),
-                nn.ReLU(),
+                nn.Conv2d(1,64,(1,3),padding=(0,1),bias=False),
                 self.bn2d_func(64),
-
-                nn.Conv2d(64,64,(1,3),padding=(0,1)),
                 nn.ReLU(),
-                self.bn2d_func(64),
 
-                nn.Flatten(),
+                nn.Conv2d(64,64,(1,3),padding=(0,1),bias=False),
+                self.bn2d_func(64),
+                nn.ReLU(),
+
                 )
 
+        self.local = nn.Sequential(
+                LocallyConnected2d(64, 32, (1,EMG_DIM), 1, 1, bias=False),
+                self.bn2d_func(32),
+                nn.ReLU(),
+
+                LocallyConnected2d(32, 32, (1,EMG_DIM),1, 1, bias=False),
+                self.bn2d_func(32),
+                nn.ReLU(),
+                nn.Dropout(self.dp),
+
+                nn.Flatten(),
+            )
+        
         self.linear = nn.Sequential(
-                nn.Linear(EMG_DIM*64, 512),
-                nn.ReLU(),
+                nn.Linear(32*EMG_DIM, 512,bias=False),
                 self.bn1d_func(512),
-
-                nn.Linear(512, 512),
                 nn.ReLU(),
-                self.bn1d_func(512),
-
-                nn.Linear(512, 512),
-                nn.ReLU(),
-                self.bn1d_func(512),
                 nn.Dropout(self.dp),
 
-                nn.Linear(512, 512),
+                nn.Linear(512, 512,bias=False),
+                self.bn1d_func(512),
                 nn.ReLU(), 
-                self.bn1d_func(512),
                 nn.Dropout(self.dp),
+                )
+
+        self.simple = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(EMG_DIM, 64),
+                nn.ReLU(),
+                nn.Linear(64, MAX_TASKS_TRAIN, bias=False)
                 )
 
         if self.prediction:
@@ -226,7 +246,7 @@ class EMGNet(nn.Module):
                     nn.Linear(512, 128),
                     nn.ReLU(),
                     self.bn1d_func(128),
-                    nn.Dropout(self.dp),
+                    #nn.Dropout(self.dp),
 
                     nn.Linear(128, MAX_TASKS_TRAIN, bias=False),
                     )
@@ -236,11 +256,21 @@ class EMGNet(nn.Module):
                     nn.Linear(512, self.d_e, bias=False),
                     )
 
-        self.to(self.device)
 
+        self.to(self.device)
+        self.apply(self.init_weights)
+
+    def init_weights(self, m):
+        if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d) or isinstance(m, LocallyConnected2d):
+            torch.nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                m.bias.data.fill_(0.01)
+        
     def forward(self, EMG):
         out=EMG.reshape(-1, 1, 1, EMG_DIM)
+        #out=self.simple(out)
         out=self.conv_emg(out)
+        out=self.local(out)
         out=self.linear(out)
         if not self.prediction:
             # reshape back
@@ -277,13 +307,13 @@ class GLOVENet(nn.Module):
                 # conv -> bn -> relu
                 #self.bn2d_func(1),
 
-                #nn.Conv2d(1,64,(1,3),padding=(0,1)),
-                #nn.ReLU(),
-                #self.bn2d_func(64),
+                nn.Conv2d(1,64,(1,3),padding=(0,1)),
+                nn.ReLU(),
+                self.bn2d_func(64),
 
-                #nn.Conv2d(64,64,(1,3),padding=(0,1)),
-                #nn.ReLU(),
-                #self.bn2d_func(64),
+                nn.Conv2d(64,64,(1,3),padding=(0,1)),
+                nn.ReLU(),
+                self.bn2d_func(64),
 
                 nn.Flatten(),
                 )
@@ -291,8 +321,7 @@ class GLOVENet(nn.Module):
         self.linear = nn.Sequential(
                 nn.Flatten(),
 
-                #nn.Linear(GLOVE_DIM*64, 512),
-                nn.Linear(GLOVE_DIM, 512//2),
+                nn.Linear(GLOVE_DIM*64, 512//2),
                 nn.ReLU(),
                 self.bn1d_func(512//2),
 
@@ -301,10 +330,10 @@ class GLOVENet(nn.Module):
                 self.bn1d_func(512//2),
                 nn.Dropout(self.dp),
 
-                #nn.Linear(512, 512),
-                #nn.ReLU(), 
-                #self.bn1d_func(512),
-                #nn.Dropout(self.dp),
+                nn.Linear(512//2, 512//2),
+                nn.ReLU(), 
+                self.bn1d_func(512//2),
+                nn.Dropout(self.dp),
                 )
 
         if self.prediction:
