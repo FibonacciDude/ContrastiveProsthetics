@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 from constants import *
 from utils import *
+import ipdb
 
 #torch.autograd.set_detect_anomaly(True)
 
@@ -73,8 +74,8 @@ class Model(nn.Module):
         self.glove=glove
         self.device = torch.device(device)
 
-        self.emg_net = EMGNet(d_e=params['d_e'], dp=params['dp'], adabn=adabn, prediction=prediction) 
-        self.glove_net = GLOVENet(d_e=params['d_e'], dp=params['dp_2'], adabn=adabn, prediction=prediction) 
+        self.emg_net = EMGNet(d_e=params['d_e'], dp=params['dp_emg'], adabn=adabn, prediction=prediction) 
+        self.glove_net = GLOVENet(d_e=params['d_e'], dp=params['dp_glove'], adabn=adabn, prediction=prediction) 
 
         self.loss_f = torch.nn.functional.cross_entropy
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1)/0.07)
@@ -106,6 +107,7 @@ class Model(nn.Module):
         return self.glove_net(GLOVE)
 
     def forward(self, EMG, GLOVE):
+        #ipdb.set_trace()
         if self.prediction:
             if self.glove:
                 features = self.encode_glove(GLOVE)
@@ -145,6 +147,7 @@ class Model(nn.Module):
         return loss
         
     def loss(self, logits, labels):
+        l=(labels.cpu().numpy())
         if self.prediction:
             loss=self.prediction_loss(logits, labels)
         else:
@@ -155,11 +158,13 @@ class Model(nn.Module):
             loss=(loss_e+loss_g)/2
         return loss
 
-    def correct_glove(self):
+    def correct(self):
         return np.array(self.corrects).mean()
 
     def l2(self):
-        return self.emg_net.l2()*self.params['l2']+self.glove_net.l2()*self.params['l2_2']
+        if self.prediction:
+            return self.glove_net.l2()*self.params['reg_glove'] if self.glove else self.emg_net.l2()*self.params['reg_emg'] 
+        return self.glove_net.l2()*self.params['reg_glove'] + self.emg_net.l2()*self.params['reg_emg'] 
 
 class EMGNet(nn.Module):
     def __init__(self, d_e, dp=.5, adabn=True, train=True, prediction=False, device="cuda"):
@@ -181,7 +186,7 @@ class EMGNet(nn.Module):
 
         self.conv_emg=nn.Sequential(
                 # conv -> bn -> relu
-                self.bn2d_func(1),
+                #self.bn2d_func(1),
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
@@ -192,6 +197,7 @@ class EMGNet(nn.Module):
                 nn.Conv2d(64,64,(1,3),padding=(0,1)),
                 nn.ReLU(),
                 self.bn2d_func(64),
+
                 nn.Flatten(),
                 )
 
@@ -222,8 +228,7 @@ class EMGNet(nn.Module):
                     self.bn1d_func(128),
                     nn.Dropout(self.dp),
 
-                    # TODO: fix, we assume we know this beforehand
-                    nn.Linear(128, 37),
+                    nn.Linear(128, MAX_TASKS_TRAIN, bias=False),
                     )
         else:
             self.last = nn.Sequential(
@@ -270,44 +275,46 @@ class GLOVENet(nn.Module):
 
         self.conv_glove=nn.Sequential(
                 # conv -> bn -> relu
-                self.bn2d_func(1),
-                # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
-                # larger kernel
-                nn.Conv2d(1,64,(1,3),padding=(0,1)),
-                nn.ReLU(),
-                self.bn2d_func(64),
+                #self.bn2d_func(1),
 
-                nn.Conv2d(64,64,(1,3),padding=(0,1)),
-                nn.ReLU(),
-                self.bn2d_func(64),
+                #nn.Conv2d(1,64,(1,3),padding=(0,1)),
+                #nn.ReLU(),
+                #self.bn2d_func(64),
+
+                #nn.Conv2d(64,64,(1,3),padding=(0,1)),
+                #nn.ReLU(),
+                #self.bn2d_func(64),
+
                 nn.Flatten(),
                 )
 
         self.linear = nn.Sequential(
-                nn.Linear(GLOVE_DIM*64, 512),
-                nn.ReLU(),
-                self.bn1d_func(512),
+                nn.Flatten(),
 
-                nn.Linear(512, 512),
+                #nn.Linear(GLOVE_DIM*64, 512),
+                nn.Linear(GLOVE_DIM, 512//2),
                 nn.ReLU(),
-                self.bn1d_func(512),
+                self.bn1d_func(512//2),
+
+                nn.Linear(512//2, 512//2),
+                nn.ReLU(),
+                self.bn1d_func(512//2),
                 nn.Dropout(self.dp),
 
-                nn.Linear(512, 512),
-                nn.ReLU(), 
-                self.bn1d_func(512),
-                nn.Dropout(self.dp),
+                #nn.Linear(512, 512),
+                #nn.ReLU(), 
+                #self.bn1d_func(512),
+                #nn.Dropout(self.dp),
                 )
 
         if self.prediction:
             self.last = nn.Sequential(
-                    nn.Linear(512, 128),
+                    nn.Linear(512//2, 128),
                     nn.ReLU(),
                     self.bn1d_func(128),
                     nn.Dropout(self.dp),
 
-                    # TODO: fix, we assume we know this beforehand
-                    nn.Linear(128, 37),
+                    nn.Linear(128, MAX_TASKS_TRAIN, bias=False),
                     )
         else:
             self.last = nn.Sequential(

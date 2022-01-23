@@ -9,6 +9,7 @@ import numpy as np
 import tqdm
 from utils import *
 from torch.multiprocessing import Pool, Process, set_start_method
+import matplotlib.pyplot as plt
 import pyxis as px
 try:
      set_start_method('spawn')
@@ -113,8 +114,8 @@ class DB23(data.Dataset):
         print("People:", PEOPLE)
         print("Tasks (not including rest):" ,TASKS)
         self.time_mask=np.arange(0,TOTAL_WINDOW_SIZE,FACTOR,dtype=np.uint8)
-        self.emg_stats=RunningStats(PATH_DIR+"data/emg_", complete=True)
-        shape=(len(PEOPLE), MAX_TASKS+1,MAX_REPS,len(self.time_mask))
+        self.emg_stats=RunningStats(PATH_DIR+"data/emg_", complete=args.complete)
+        shape=(len(PEOPLE),MAX_TASKS,MAX_REPS,len(self.time_mask))
         EMG=torch.empty(shape+(EMG_DIM,), device=self.device)
 
         for i, person in enumerate(tqdm(PEOPLE)):
@@ -133,12 +134,11 @@ class DB23(data.Dataset):
             self.Es = (E1, E2)
 
             for rep in range(MAX_REPS):
-                for stim in range(MAX_TASKS+1):
+                for stim in range(MAX_TASKS):
                     emg=self.get_stim_rep(stim,rep+1)
                     # only add if in the training set
-                    if (person in TRAIN_PEOPLE and rep in self.rep_train and stim in TRAIN_TASKS):
+                    if (person in TRAIN_PEOPLE and rep in self.rep_train and (stim in TRAIN_TASKS or stim==0)):
                         self.emg_stats.push(emg) 
-
                     EMG[i,stim,rep]=emg
 
         emg_means,emg_std=self.emg_stats.mean_std()
@@ -154,47 +154,19 @@ class DB23(data.Dataset):
         if not args.no_glove:
             # now glover's turn
             self.glover.load_dataset()
-        
-    @property
-    def PEOPLE(self):
-        return len(self.people_mask)
-
-    @property
-    def TASKS(self):
-        # TODO: add all tasks at test time (take this out)
-        return len(self.tasks_mask)
-
-    @property
-    def REPS(self):
-        if self.train:
-            return len(self.rep_train)
-        elif self.val:
-            return len(self.rep_val)
-        else:
-            return len(self.rep_test) 
-
-    @property
-    def OUTPUT_DIM(self):
-        if self.train:# or self.val:
-            return int(WINDOW_OUTPUT_DIM)
-        return int(PREDICTION_WINDOW_SIZE)
-
-    @property
-    def D(self):
-        return self.PEOPLE*self.REPS*self.OUTPUT_DIM
-
+            
     @property
     def tasks_mask(self):
         #tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
-        # TODO: change back to all tasks
         #tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks_test[:1]
+        # TODO: change back to all tasks
         tasks_mask=self.tasks_train
-        return torch.cat((tasks_mask, torchize([0])))
+        tasks_mask=torch.cat((tasks_mask, torchize([0])))
+        return tasks_mask
 
     @property
     def people_mask(self):
-        return self.people_train if (self.train or self.val) else self.people
-        #return self.people_train if (self.train or self.val) else torch.cat((self.people_test, torch.tensor([self.people_test[3]]*(MAX_PEOPLE_TRAIN-MAX_PEOPLE_TEST), device=torch.device("cuda")))).reshape(-1)
+        return self.people_train if (self.train or self.val) else self.people_test
 
     @property
     def rep_mask(self):
@@ -206,10 +178,37 @@ class DB23(data.Dataset):
         else:
             return self.rep_test
 
+    @property
+    def PEOPLE(self):
+        return len(self.people_mask)
+
+    @property
+    def TASKS(self):
+        return len(self.tasks_mask)
+
+    @property
+    def REPS(self):
+        return len(self.rep_mask)
+        
+    @property
+    def D(self):
+        return self.PEOPLE*self.REPS*self.OUTPUT_DIM
+
+
+    @property
+    def OUTPUT_DIM(self):
+        if self.train:
+            return int(WINDOW_OUTPUT_DIM)
+        return int(PREDICTION_WINDOW_SIZE)
+
     def load_valid(self):
         tensor=self.EMG[self.tasks_mask][:, self.people_mask][:, :, self.rep_mask]
         tensor=tensor[:, :, :, :self.OUTPUT_DIM]
+        # tasks x people x rep -> tasks*(people*rep*output_dim)
         self.EMG_use=tensor.reshape(-1, EMG_DIM)
+        a=self.EMG_use[self.D*2+1]
+        b=tensor[2].reshape(-1,EMG_DIM)[1]
+        assert torch.equal(a, b), "indexing is not correct"
         self.glover.load_valid(self.tasks_mask)
 
     def __len__(self):
@@ -245,23 +244,23 @@ def info(db):
         print("\tBatch amts: %s"%(batch))
         
 def visualize(db):
-    import matplotlib.pyplot as plt
-    db.raw=True
     db.set_train()
-    EMG=db[0]
-    dat=EMG.squeeze(0).expand(100,-1).cpu().numpy()
-    dim=EMG_DIM
-    for sensor in range(dim):
+    dat=db.EMG[args.person, args.task,args.rep,:,:].cpu().numpy()
+    for sensor in range(EMG_DIM):
         plt.plot(dat[:, sensor])
     plt.show()
     
 if __name__=="__main__":
 
     parser = argparse.ArgumentParser(description='Loading ninapro dataset')
+    parser.add_argument('--task', type=int, default=0)
+    parser.add_argument('--rep', type=int, default=0)
+    parser.add_argument('--person', type=int, default=0)
     parser.add_argument('--load', action='store_true')
     parser.add_argument('--load_glove', action='store_true')
     parser.add_argument('--viz', action='store_true')
     parser.add_argument('--info', action='store_true')
+    parser.add_argument('--complete', action='store_true')
     parser.add_argument('--no_glove', action='store_true')
     args = parser.parse_args()
 

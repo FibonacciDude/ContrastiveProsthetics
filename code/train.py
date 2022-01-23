@@ -17,7 +17,6 @@ import matplotlib.pyplot as plt
 import line_profiler, builtins, atexit
 profile=line_profiler.LineProfiler()
 atexit.register(profile.print_stats)
-#builtins.__dict__['profile']=prof
 
 torch.cuda.manual_seed(42)
 np.random.seed(42)
@@ -28,11 +27,9 @@ shuff=True
 def test(model, dataset):
     dataset.set_test()
     model.set_test()
-    total_tasks=dataset.TASKS
 
     total_loss = []
-    #loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, sampler=Sampler(dataset, args.batch_size))
-    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
+    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=shuff)
 
     for (EMG, GLOVE, label) in loader:
         label=label.reshape(-1)
@@ -42,17 +39,16 @@ def test(model, dataset):
             loss=model.loss(logits, label)
             total_loss.append(loss.item())
 
-    acc=model.correct_glove()
+    acc=model.correct()
     mean_loss=np.array(total_loss).mean()
     return mean_loss, acc
 
 def validate(model, dataset):
     dataset.set_val()
     model.set_val()
-    total_tasks=dataset.TASKS
 
     total_loss = []
-    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
+    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=shuff)
 
     for (EMG, GLOVE, label) in tqdm(loader):
         label=label.reshape(-1)
@@ -62,7 +58,7 @@ def validate(model, dataset):
             loss=model.loss(logits, label)
             total_loss.append(loss.item())
 
-    acc=model.correct_glove()
+    acc=model.correct()
     mean_loss=np.array(total_loss).mean()
     return mean_loss, acc
 
@@ -81,10 +77,9 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
     # train data
     dataset.set_train()
-    total_tasks = dataset.TASKS
     model.set_train()
 
-    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=True)
+    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=shuff)
 
     val_losses={}
     counter=0
@@ -93,21 +88,19 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     for e in trange(params['epochs']):
         
         loss_train=[]
-        t=time()
         for (EMG, GLOVE, label) in tqdm(loader):
             label=label.reshape(-1)
             #with amp.autocast():
             logits=model.forward(EMG, GLOVE)
             loss=model.loss(logits, label)
             loss_train.append(loss.item())
-            loss=loss+model.l2()*params['l2']
-            #torch.nn.utils.clip_grad_norm_(model.parameters(), 10)
+            loss=loss+model.l2()
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
 
-        acc_train=model.correct_glove()
+        acc_train=model.correct()
 
         scheduler.step()
        
@@ -136,24 +129,22 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
     return final_val_acc, model
 
-def cross_validate(lrs, regs, des, dps, regs_2, dps_2, dataset, epochs=6, save=True, load=False):
+def cross_validate(des, hyperparams, dataset, epochs=6, save=True, load=False):
     cross_val={}
     if not load:
         for d_e in des:
-            for i in range(len(lrs)):
-                lr, reg, dp, reg_2, dp_2 = lrs[i], regs[i], dps[i], regs_2[i], dps_2[i]
-                print("d_e: %s, lr: %s, reg: %s, dp: %s, reg_2: %s, dp_2: %s"%(str(d_e),str(lr),str(reg), str(dp), str(reg_2), str(dp_2)))
+            for hypervals in zip(*list(hyperparams.values())):
+                current = {
+                    key : val for key,val in zip(list(hyperparams.keys()), hypervals)
+                    }
+                print(current)
                 params = {
                         'd_e' : d_e,
                         'epochs' : epochs,
-                        'lr' : lr,
-                        'l2' : reg,
-                        'dp' : dp,
-                        'dp_2' : dp_2,
-                        'l2_2' : reg_2
                         }
+                params.update(current)
                 (loss_t,acc_t),model=train_loop(dataset, params, checkpoint=False, verbose=False)
-                cross_val[(int(d_e), lr, reg, dp, reg_2, dp_2)]=(loss_t,acc_t)
+                cross_val[(d_e,)+tuple(hypervals)]=(loss_t,acc_t)
 
         values = np.array(list(cross_val.values()))
         keys = np.array(list(cross_val.keys()))
@@ -167,44 +158,45 @@ def cross_validate(lrs, regs, des, dps, regs_2, dps_2, dataset, epochs=6, save=T
     return values, keys
 
 def main(args):
-    # DATASET - this is just for loading, change at will (no need to resample)
-    new_people=5
-    new_tasks=4
-
     dataset23 = DB23()
     print("Loading dataset")
     dataset23.load_stored()
     print("Dataset loaded")
     dataset23=TaskWrapper(dataset23)
 
-    #lrs = [1e-4]*args.crossval_size
-    #regs = 10**np.random.uniform(low=-8, high=0, size=(args.crossval_size,))
     lrs = 10**np.random.uniform(low=-6, high=0, size=(args.crossval_size,))
-    regs = 10**np.random.uniform(low=-9, high=1, size=(args.crossval_size,))
-    dps = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
-    regs_2 = 10**np.random.uniform(low=-9, high=1, size=(args.crossval_size,))
-    dps_2 = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
+    regs_emg = 10**np.random.uniform(low=-9, high=1, size=(args.crossval_size,))
+    dps_emg = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
+    regs_glove = 10**np.random.uniform(low=-9, high=1, size=(args.crossval_size,))
+    dps_glove = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
     des=[16]
 
-    values, keys = cross_validate(lrs, regs, des, dps, regs_2, dps_2, dataset23, epochs=args.crossval_epochs, save=True, load=args.crossval_load)
+    hyperparams = {
+            'lr' : lrs,
+            'reg_emg' : regs_emg,
+            'dp_emg' : dps_emg,
+            'reg_glove' : regs_glove,
+            'dp_glove' : dps_glove,
+            }
+
+    values, keys = cross_validate(des, hyperparams, dataset23, epochs=args.crossval_epochs, save=True, load=args.crossval_load)
 
     # get best
     best_val = np.nanargmax(values[:, 1])
     best_key = keys[best_val]
     print("Best combination: %s" % str(best_key))
-    #print(sorted(list(values[:, 1])))
 
     # test model
-    d_e, lr, reg, dp, reg_2, dp_2 = best_key     # best model during validation
+    d_e, lr, reg_e, dp_e, reg_g, dp_g = best_key     # best model during validation
 
     params = {
             'd_e' : int(d_e),
             'epochs' : args.final_epochs,
             'lr' : lr,
-            'dp' : dp,
-            'l2' : reg,
-            'dp_2' : dp_2,
-            'l2_2' : reg_2
+            'dp_emg' : dp_e,
+            'reg_emg' : reg_e,
+            'dp_glove' : dp_g,
+            'reg_glove' : reg_g
             }
 
     print("Final training of model")

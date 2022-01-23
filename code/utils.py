@@ -48,6 +48,12 @@ class TaskWrapper():
         tensor_emg = self.dataset[self.emg_rand[:, idx]]
         tensor_glove = self.dataset.glover[self.glove_rand[:, idx%self.dataset.glover.D]]
         label=torch.arange(self.dataset.TASKS, device=self.device, dtype=torch.long)
+
+        #idxx=self.idx[self.dataset.TASKS*idx:self.dataset.TASKS*(idx+1)]
+        #tensor_emg=self.dataset[idxx]
+        #tensor_glove = self.dataset.glover[idxx]
+        #label=(idxx//self.dataset.D).to(torch.long).flatten()
+
         # move to half precision
         tensor_emg=tensor_emg.to(torch.float32)
         tensor_glove=tensor_glove.to(torch.float32)
@@ -220,7 +226,7 @@ class Glover():
         for person in tqdm(self.GLOVE_PEOPLE):
             self.get_person_dat(person)
             all_tasks=[]
-            for stim in range(len(TASKS)+1):
+            for stim in range(MAX_TASKS):
                 dat=self.get_task(stim)
                 all_tasks.append(dat)
             all_tasks=np.array(all_tasks)
