@@ -211,7 +211,7 @@ if __name__=="__main__":
     parser.add_argument('--crossval_size', type=int, default=100)
     parser.add_argument('--crossval_epochs', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--final_epochs', type=int, default=100)
+    parser.add_argument('--final_epochs', type=int, default=40)
     parser.add_argument('--crossval_load', action='store_true')
     parser.add_argument('--no_adabn', action='store_false')
     parser.add_argument('--no_checkpoint', action='store_false')

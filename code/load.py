@@ -48,14 +48,20 @@ class DB23(data.Dataset):
     def set_train(self):
         self.train=True
         self.val=False
+        self.refresh()
 
     def set_test(self):
         self.train=False
         self.val=False
+        self.refresh()
 
     def set_val(self):
         self.train=False
         self.val=True
+        self.refresh()
+
+    def refresh(self):
+        self.tensor = self.EMG[self.people_mask][:, self.tasks_mask][:, :, self.rep_mask]
 
     def load_stored(self):
         self.EMG=torch.load(self.path+'data/emg.pt', map_location=self.device)
@@ -177,20 +183,20 @@ class DB23(data.Dataset):
         elif self.val:
             return self.rep_val
         else:
-            return self.reps #self.rep_test
+            return self.reps
 
     def __len__(self):
         return self.PEOPLE*self.TASKS*self.REPS*WINDOW_OUTPUT_DIM
 
     def slice_batch(self, DIM, idx):
         task_idx = idx // (self.PEOPLE * self.REPS * WINDOW_OUTPUT_DIM)
-        #"""
+        
         people_rep_output_idx = idx % (self.PEOPLE * self.REPS * WINDOW_OUTPUT_DIM)
         people_idx = people_rep_output_idx // (self.REPS * WINDOW_OUTPUT_DIM)
         rep_output_idx = people_rep_output_idx % (self.REPS * WINDOW_OUTPUT_DIM)
-        tensor = self.EMG[people_idx, task_idx]
+        #tensor = tensor[:, self.tasks_mask]
+        tensor=self.tensor[people_idx, task_idx]
         tensor = tensor.reshape(-1, DIM)[rep_output_idx]
-        #"""
         
         # now we have only one slice, convert to an image
         tensor = tensor.reshape(1, 1, DIM)
@@ -229,7 +235,7 @@ def visualize(db):
     db.raw=True
     db.set_train()
     EMG=db[0]
-    dat=EMG[0,0,0,:,:].cpu().numpy()
+    dat=EMG[0,1,0,:,:].cpu().numpy()
     dim=EMG_DIM
     for sensor in range(dim):
         print(dat[:, sensor].max(), sensor)
