@@ -62,9 +62,7 @@ class DB23(data.Dataset):
     def load_stored(self):
         self.EMG=torch.load(PATH_DIR+'data/emg.pt', map_location=self.device)
         self.EMG.cuda()
-        # transpose for indexing
-        # people x tasks x ... -> tasks x people x ...
-        self.EMG=self.EMG.transpose(0,1)
+        #self.EMG=self.EMG.transpose(0,1)
         print("Loading stored emg...", self.EMG.shape)
         self.GLOVE=self.glover.load_stored()
 
@@ -192,7 +190,9 @@ class DB23(data.Dataset):
         
     @property
     def D(self):
-        return self.PEOPLE*self.REPS*self.OUTPUT_DIM
+        #return self.PEOPLE*self.REPS*self.OUTPUT_DIM
+        # plus people
+        return self.REPS*self.OUTPUT_DIM
 
     @property
     def OUTPUT_DIM(self):
@@ -201,29 +201,33 @@ class DB23(data.Dataset):
         return int(PREDICTION_WINDOW_SIZE)
 
     def load_valid(self):
-        print(self.EMG.shape)
-        tensor=self.EMG[self.tasks_mask][:, self.people_mask][:, :, self.rep_mask]
-        tensor=tensor[:, :, :, :self.OUTPUT_DIM]
+        tensor=self.EMG[self.tasks_mask][:, self.people_mask]
+        tensor=tensor[:, :, self.rep_mask][:, :, :, :self.OUTPUT_DIM]
+        # people x tasks x reps x outputdim x dim
+        self.tensor=tensor.reshape(self.PEOPLE, -1, EMG_DIM)
+
         # tasks x people x rep -> tasks*(people*rep*output_dim)
-        self.EMG_use=tensor.reshape(-1, EMG_DIM)
-        a=self.EMG_use[self.D*2+1]
-        b=tensor[2].reshape(-1,EMG_DIM)[1]
-        assert torch.equal(a, b), "indexing is not correct"
+        #self.EMG_use=tensor.reshape(-1, EMG_DIM)
+        #a=self.EMG_use[self.D*2+1]
+        #b=tensor[2].reshape(-1,EMG_DIM)[1]
+        #assert torch.equal(a, b), "indexing is not correct"
+
         self.glover.load_valid(self.tasks_mask)
 
     def __len__(self):
         return self.TASKS*self.D
 
-    def slice_batch(self, idx):
+    def slice_batch(self, people_idx, idx):
+        # idx can be an array, but not people_idx
         # every self.D is a new task
-        tensor = self.EMG_use[idx].reshape(-1, 1, 1, EMG_DIM)
+        tensor = self.tensor[people_idx][idx].reshape(-1, 1, 1, EMG_DIM)
         return tensor
 
-    def __getitem__(self, idx):
-        if self.raw:
-            return self.EMG
-        EMG=self.slice_batch(idx)
-        return EMG
+    #def __getitem__(self, idx):
+    #    if self.raw:
+    #        return self.EMG
+    #    EMG=self.slice_batch(idx)
+    #    return EMG
 
 def load(db,glove=False):
     db.load_dataset(glove=glove)

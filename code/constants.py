@@ -29,6 +29,10 @@ PEOPLE=np.concatenate((PEOPLE_D2, PEOPLE_D3))
 PEOPLE_IDXS=np.concatenate((d2_idxs, d3_idxs+len(d2_idxs)))
 
 TRAIN_PEOPLE_IDXS=PEOPLE_IDXS[:-NEW_PEOPLE]
+<<<<<<< Updated upstream
+=======
+VAL_PEOPLE_IDXS=PEOPLE_IDXS[-NEW_PEOPLE-PEOPLE_VAL:-NEW_PEOPLE]
+>>>>>>> Stashed changes
 TEST_PEOPLE_IDXS=PEOPLE_IDXS[-NEW_PEOPLE:]
 
 # this was a bug before

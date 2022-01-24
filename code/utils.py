@@ -25,34 +25,30 @@ class TaskWrapper():
         # you need to set_....() in order to make it create rand
         #self.reset()
         
+    def return_rand_g(self, D):
+        b=torch.arange(self.dataset.TASKS, device=self.device, dtype=torch.long).reshape(self.dataset.TASKS,1)*D
+        return torch.rand((self.dataset.TASKS, D), device=self.device).argsort(dim=-1)+b
+
     def return_rand(self, D):
-        self.rand = torch.empty((self.dataset.TASKS, D), device=self.device, dtype=torch.long)
-        for t in range(self.dataset.TASKS):
-            self.rand[t] = torch.randperm(D, dtype=torch.long, device=self.device)+D*t
-        return self.rand
+        b=torch.arange(self.dataset.TASKS, device=self.device, dtype=torch.long).reshape(1,self.dataset.TASKS,1)*D
+        return torch.rand((self.dataset.PEOPLE, self.dataset.TASKS, D), device=self.device).argsort(dim=-1)+b
 
     def reset(self):
-        self.emg_rand=self.return_rand(self.dataset.D)
-        self.glove_rand=self.return_rand(self.dataset.glover.D)
-        self.idx=torch.randperm(self.dataset.TASKS*self.dataset.D, device=self.device, dtype=torch.long)
+        self.emg_rand=self.return_rand(self.dataset.D).to(torch.long)
+        self.glove_rand=self.return_rand_g(self.dataset.glover.D).to(torch.long)
 
     def __getattr__(self, name):
-        #def method(*args, **kwargs):
         return getattr(self.dataset, name)
-        #return method
 
     def __len__(self):
-        return self.dataset.D
+        return self.dataset.D*self.dataset.PEOPLE
 
     def __getitem__(self, idx):
-        tensor_emg = self.dataset[self.emg_rand[:, idx]]
+        people_idx=idx//self.dataset.D
+        else_idx=idx%self.dataset.D
+        tensor_emg = self.dataset.slice_batch(people_idx, self.emg_rand[people_idx, :, else_idx])
         tensor_glove = self.dataset.glover[self.glove_rand[:, idx%self.dataset.glover.D]]
         label=torch.arange(self.dataset.TASKS, device=self.device, dtype=torch.long)
-
-        #idxx=self.idx[self.dataset.TASKS*idx:self.dataset.TASKS*(idx+1)]
-        #tensor_emg=self.dataset[idxx]
-        #tensor_glove = self.dataset.glover[idxx]
-        #label=(idxx//self.dataset.D).to(torch.long).flatten()
 
         # move to half precision
         tensor_emg=tensor_emg.to(torch.float32)
