@@ -32,12 +32,13 @@ class DB23(data.Dataset):
         self.tasks=torchize(TASKS)
 
         self.people_train=torchize(TRAIN_PEOPLE_IDXS)
-        self.people_val=torchize(VAL_PEOPLE_IDXS)
         self.people_test=torchize(TEST_PEOPLE_IDXS)
 
         self.people=torchize(PEOPLE_IDXS)
 
         self.reps=torchize(REPS)-1
+        self.reps_train=torchize(REPS_TRAIN)-1
+        self.reps_val=torchize(REPS_VAL)-1
 
         # own little dataset
         self.glover=Glover()
@@ -132,7 +133,7 @@ class DB23(data.Dataset):
                 for stim in range(MAX_TASKS):
                     emg=self.get_stim_rep(stim,rep+1)
                     # only add if in the training set
-                    if (person in TRAIN_PEOPLE and (stim in TRAIN_TASKS or stim==0)):
+                    if ((person in TRAIN_PEOPLE) and (rep in self.reps_train) and (stim in TRAIN_TASKS or stim==0)):
                         self.emg_stats.push(emg)
                     EMG[i,stim,rep]=emg
 
@@ -164,13 +165,18 @@ class DB23(data.Dataset):
         if self.train:
             return self.people_train
         elif self.val:
-            return self.people_val
+            return self.people_train
         else:
             return self.people_test
 
     @property
     def rep_mask(self):
-        return self.reps
+        if self.train:
+            return self.reps_train
+        elif self.val:
+            return self.reps_val
+        else:
+            return self.reps
 
     @property
     def PEOPLE(self):
@@ -188,11 +194,10 @@ class DB23(data.Dataset):
     def D(self):
         return self.PEOPLE*self.REPS*self.OUTPUT_DIM
 
-
     @property
     def OUTPUT_DIM(self):
         if self.train:
-            return int(WINDOW_OUTPUT_DIM/3)
+            return int(WINDOW_OUTPUT_DIM/2)
         return int(PREDICTION_WINDOW_SIZE)
 
     def load_valid(self):

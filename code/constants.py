@@ -1,6 +1,6 @@
 import numpy as np
 
-np.random.seed(42)
+np.random.seed(0)
 
 PEOPLE_D2=list(range(40))
 PEOPLE_D3=[2,3,4,5,8,9]
@@ -28,30 +28,34 @@ PEOPLE=np.concatenate((PEOPLE_D2, PEOPLE_D3))
 
 PEOPLE_IDXS=np.concatenate((d2_idxs, d3_idxs+len(d2_idxs)))
 
-TRAIN_PEOPLE_IDXS=PEOPLE_IDXS[:-NEW_PEOPLE-PEOPLE_VAL]
-VAL_PEOPLE_IDXS=PEOPLE_IDXS[-NEW_PEOPLE-PEOPLE_VAL:-NEW_PEOPLE]
+TRAIN_PEOPLE_IDXS=PEOPLE_IDXS[:-NEW_PEOPLE]
 TEST_PEOPLE_IDXS=PEOPLE_IDXS[-NEW_PEOPLE:]
 
 # this was a bug before
 TRAIN_PEOPLE=PEOPLE[TRAIN_PEOPLE_IDXS]
-VAL_PEOPLE=PEOPLE[VAL_PEOPLE_IDXS]
 TEST_PEOPLE=PEOPLE[TEST_PEOPLE_IDXS]
 
-MAX_PEOPLE_TRAIN=MAX_PEOPLE-NEW_PEOPLE-PEOPLE_VAL
-MAX_PEOPLE_VAL=PEOPLE_VAL
+MAX_PEOPLE_TRAIN=MAX_PEOPLE-NEW_PEOPLE
 MAX_PEOPLE_TEST=NEW_PEOPLE
 
-TASKS=np.array(list(range(1,41)), dtype=np.uint8)
-np.random.shuffle(TASKS)
+TASKS_A=np.array(list(range(1,18)), dtype=np.uint8)
+TASKS_B=np.array(list(range(18,41)), dtype=np.uint8)
+np.random.shuffle(TASKS_A)
+np.random.shuffle(TASKS_B)
+TASKS=np.concatenate((TASKS_A, TASKS_B))
+# Random tasks from natural adl grasps
 TEST_TASKS=TASKS[-NEW_TASKS:]
 TRAIN_TASKS=TASKS[:-NEW_TASKS]
 TASK_DIST=np.array([17,23])
 MAX_TASKS=TASK_DIST.sum()+1
+print("New tasks:", TEST_TASKS-TASK_DIST[0])
 
 MAX_TASKS_TRAIN=MAX_TASKS-NEW_TASKS
 
 REPS=[1,3,4,6,2,5]
 MAX_REPS=len(REPS)
+REPS_TRAIN=REPS[:-1]
+REPS_VAL=REPS[-1:]
 
 PATH_DIR="/home/breezy/hci/prosthetics/db23/"
 
@@ -70,7 +74,7 @@ WINDOW_EDGE=(RMS_WINDOW-1)//2
 PREDICTION_WINDOW=100
 PREDICTION_WINDOW_SIZE=PREDICTION_WINDOW*DOWNSAMPLE/1000
 
-TOTAL_WINDOW_SIZE=int(Hz*1)
+TOTAL_WINDOW_SIZE=int(Hz*.5)
 FINAL_WINDOW_SIZE=TOTAL_WINDOW_SIZE//FACTOR
 
 Hz_glove=25     # much, much lower than that of sEMG
