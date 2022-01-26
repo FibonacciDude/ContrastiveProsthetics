@@ -90,7 +90,7 @@ class DB23(data.Dataset):
         # rectification might be problematic for real time software
         # filter raw signal - 20 Hz to 450 Hz
 
-        emg_=filter(emg_, (20, 450), butterworth_order=4,btype="bandpass")
+        emg_=filter(emg_, (10, 75), butterworth_order=4,btype="bandpass")
         emg_=rms(emg_)
         emg_=torchize(emg_[self.time_mask])
         return emg_
@@ -108,7 +108,8 @@ class DB23(data.Dataset):
         print("People:", PEOPLE)
         print("Tasks (not including rest):" ,TASKS)
         self.time_mask=np.arange(0,TOTAL_WINDOW_SIZE,FACTOR,dtype=np.uint8)
-        self.emg_stats=RunningStats(PATH_DIR+"data/emg_", complete=args.complete)
+        if not args.minmax:
+            self.emg_stats=RunningStats(PATH_DIR+"data/emg_", complete=args.complete)
         shape=(len(PEOPLE),MAX_TASKS,MAX_REPS,len(self.time_mask))
         EMG=torch.empty(shape+(EMG_DIM,), device=self.device)
 
@@ -131,15 +132,23 @@ class DB23(data.Dataset):
                 for stim in range(MAX_TASKS):
                     emg=self.get_stim_rep(stim,rep+1)
                     # only add if in the training set
-                    if ((person in TRAIN_PEOPLE) and (rep in self.reps_train) and (stim in TRAIN_TASKS or stim==0)):
-                        self.emg_stats.push(emg)
+                    if not args.minmax:
+                        if ((person in TRAIN_PEOPLE) and (rep in self.reps_train) and (stim in TRAIN_TASKS or stim==0)):
+                            self.emg_stats.push(emg)
                     EMG[i,stim,rep]=emg
 
-        emg_means,emg_std=self.emg_stats.mean_std()
-        print(emg_std)
-
-        # normalize
-        EMG=self.emg_stats.normalize(EMG)
+        if args.minmax:
+            #mV=2.5*10**-3
+            #EMG=(EMG+mV)/(mV*2)
+            vals,idxs=EMG.flatten().sort()
+            max_val=vals[int(.95*EMG.flatten().shape[0])]
+            min_val=vals[int(.05*EMG.flatten().shape[0])]
+            EMG=(EMG-min_val)/max_val
+        else:
+            # normalize
+            emg_means,emg_std=self.emg_stats.mean_std()
+            print(emg_std)
+            EMG=self.emg_stats.normalize(EMG)
         print("Emg shape:", EMG.shape)
         #save
         self.save(EMG)
@@ -192,26 +201,31 @@ class DB23(data.Dataset):
     def D(self):
         #return self.PEOPLE*self.REPS*self.OUTPUT_DIM
         # plus people
-        return self.REPS*self.OUTPUT_DIM
+        #return self.REPS*(self.OUTPUT_DIM-WINDOW_MS+1)
+        return self.REPS*(self.OUTPUT_DIM//WINDOW_MS)
 
     @property
     def OUTPUT_DIM(self):
         if self.train:
-            return int(WINDOW_OUTPUT_DIM/2)
+            return int(WINDOW_OUTPUT_DIM)
         return int(PREDICTION_WINDOW_SIZE)
 
     def load_valid(self):
-        tensor=self.EMG[self.tasks_mask][:, self.people_mask]
-        tensor=tensor[:, :, self.rep_mask][:, :, :, :self.OUTPUT_DIM]
+        tensor=self.EMG[self.people_mask][:, self.tasks_mask]
+        tensor=tensor[:, :, self.rep_mask][:, :, :, :self.OUTPUT_DIM][:, :, :, :, :EMG_DIM]
+         
+        # windows
+        tensor=tensor.reshape(self.PEOPLE, self.TASKS, self.REPS, self.OUTPUT_DIM//WINDOW_MS, WINDOW_MS, EMG_DIM)
+
+        # TODO: write tests (when it seems like it works)
+    
+        #tensor=tensor.reshape(self.PEOPLE, -1, self.OUTPUT_DIM, EMG_DIM)
+        #shape=tensor.shape
+        #stride=(np.prod(shape[1:]), np.prod(shape[2:]), WINDOW_STRIDE*EMG_DIM, EMG_DIM, 1)
+        #tensor=torch.as_strided(tensor, size=(self.PEOPLE, shape[1], self.OUTPUT_DIM-WINDOW_MS+1, WINDOW_MS, EMG_DIM), stride=stride)
+
         # people x tasks x reps x outputdim x dim
-        self.tensor=tensor.reshape(self.PEOPLE, -1, EMG_DIM)
-
-        # tasks x people x rep -> tasks*(people*rep*output_dim)
-        #self.EMG_use=tensor.reshape(-1, EMG_DIM)
-        #a=self.EMG_use[self.D*2+1]
-        #b=tensor[2].reshape(-1,EMG_DIM)[1]
-        #assert torch.equal(a, b), "indexing is not correct"
-
+        self.tensor=tensor.reshape(self.PEOPLE, -1, WINDOW_MS, EMG_DIM)
         self.glover.load_valid(self.tasks_mask)
 
     def __len__(self):
@@ -220,7 +234,8 @@ class DB23(data.Dataset):
     def slice_batch(self, people_idx, idx):
         # idx can be an array, but not people_idx
         # every self.D is a new task
-        tensor = self.tensor[people_idx][idx].reshape(-1, 1, 1, EMG_DIM)
+        tensor = self.tensor[people_idx][idx].reshape(-1, 1, WINDOW_MS, EMG_DIM)
+        self.domain=self.people_mask[people_idx]      # the actual person
         return tensor
 
     #def __getitem__(self, idx):
@@ -249,7 +264,9 @@ def info(db):
         
 def visualize(db):
     db.set_train()
-    dat=db.EMG[args.person, args.task,args.rep,:,:].cpu().numpy()
+    #dat=db.EMG[args.person, args.task,args.rep,:,:].cpu().numpy()
+    dat=db.slice_batch(args.person, 0).reshape(WINDOW_MS, EMG_DIM).cpu().numpy()
+    print(dat)
     for sensor in range(EMG_DIM):
         plt.plot(dat[:, sensor])
     plt.show()
@@ -266,6 +283,7 @@ if __name__=="__main__":
     parser.add_argument('--info', action='store_true')
     parser.add_argument('--complete', action='store_true')
     parser.add_argument('--no_glove', action='store_true')
+    parser.add_argument('--minmax', action='store_true')
     args = parser.parse_args()
 
     db=DB23()

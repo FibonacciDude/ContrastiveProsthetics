@@ -6,8 +6,10 @@ from scipy.ndimage import uniform_filter1d
 from scipy import signal
 import scipy.io as sio
 from tqdm import tqdm
-
+import torch
 import line_profiler, builtins, atexit
+import torch.utils.data as data
+
 profile=line_profiler.LineProfiler()
 atexit.register(profile.print_stats)
 
@@ -18,11 +20,45 @@ np.random.seed(42)
 def torchize(X):
     return torch.from_numpy(np.array(X)).to(torch.device("cuda"))
 
+class BatchSampler(data.Sampler):
+    def __init__(self, dataset, batch_size, drop_last=False):
+        self.dt = dataset
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+        self.device=torch.device("cuda")
+
+    def reset(self):
+        b=torch.arange(self.dt.PEOPLE, device=self.device, dtype=torch.long).reshape(self.dt.PEOPLE,1)*self.dt.D
+        self.idxs=torch.rand((self.dt.PEOPLE, self.dt.D), device=self.device).argsort(dim=-1)+b
+        self.randperm=torch.randperm(self.__len__(), device=self.device, dtype=torch.long)
+
+    def __iter__(self):
+        self.reset()
+        for idx_raw in self.randperm:
+            people_idx=idx_raw // self.amt_batches
+            else_idx=idx_raw % self.amt_batches
+            batch_idxs=self.idxs[people_idx][else_idx*self.batch_size:(else_idx+1)*self.batch_size]
+            batches=[self.dt[batch_idx] for batch_idx in batch_idxs]
+            emg,glove,labels=zip(*batches)
+            emg=torch.stack(emg)
+            glove=torch.stack(glove)
+            labels=torch.stack(labels)
+            batch=(emg,glove,labels,self.dt.domain)
+            yield batch
+
+    @property
+    def amt_batches(self):
+        if self.drop_last:
+            return ( self.dt.D // self.batch_size )
+        return math.ceil( self.dt.D / self.batch_size)
+
+    def __len__(self):
+        return self.amt_batches * self.dt.PEOPLE
+
 class TaskWrapper():
     def __init__(self, dataset):
         self.dataset=dataset
         self.device=torch.device("cuda")
-        # you need to set_....() in order to make it create rand
         #self.reset()
         
     def return_rand_g(self, D):
@@ -53,6 +89,8 @@ class TaskWrapper():
         # move to half precision
         tensor_emg=tensor_emg.to(torch.float32)
         tensor_glove=tensor_glove.to(torch.float32)
+
+        self.domain=self.dataset.domain
         return tensor_emg, tensor_glove, label
 
     def set_train(self):
@@ -69,19 +107,26 @@ class TaskWrapper():
 
 # https://www.johndcook.com/blog/standard_deviation/
 class RunningStats():
-    def __init__(self, path_dir, complete=False):
+    def __init__(self, path_dir=None, complete=False, mode=False):
         self.counter = 0
         self.complete = complete
         self.path=path_dir
+        self.mode=mode
 
     def push(self, X):
         self.counter+=1
         self.np = isinstance(X, np.ndarray)
 
-        X=X.mean(0) # along window size dimension (constant for all X)
+        
+        if self.mode:
+            X=X.mean((1,2))
+        else:
+            X=X.mean(0)
+
         if self.counter==1:
             self.old_mean = self.new_mean = X
             self.old_std = np.zeros(X.shape, dtype=X.dtype) if self.np else torch.zeros(X.shape, device=X.device, dtype=X.dtype)
+            self.ones = np.ones(X.shape, dtype=X.dtype) if self.np else torch.ones(X.shape, device=X.device, dtype=X.dtype)
         else:
             self.new_mean=self.old_mean + (X-self.old_mean)/self.counter
             self.new_std=self.old_std+(X-self.old_mean)*(X-self.new_mean)
@@ -92,27 +137,29 @@ class RunningStats():
         mean=self.new_mean
         if self.complete:
             mean=mean.mean()
-        if not self.np:
-            np.save(self.path+"mean.npy", mean.cpu().numpy())
-        else:
-            np.save(self.path+"mean.npy", mean)
+        if self.path is not None:
+            if not self.np:
+                np.save(self.path+"mean.npy", mean.cpu().numpy())
+            else:
+                np.save(self.path+"mean.npy", mean)
         return mean
 
     def variance(self):
+        if self.counter==1:
+            return self.ones
         return (self.new_std)/(self.counter-1)
 
     def std(self):
         var = self.variance()
         if self.complete:
             var = var.mean()
-        if self.np:
-            std=np.sqrt(self.variance())
-        else:
-            std=torch.sqrt(self.variance())
-        if not self.np:
-            np.save(self.path+"std.npy", std.cpu().numpy())
-        else:
-            np.save(self.path+"std.npy", std)
+        std=self.variance().sqrt()
+
+        if self.path is not None:
+            if self.np:
+                np.save(self.path+"std.npy", std)
+            else:
+                np.save(self.path+"std.npy", std.cpu().numpy())
         return std
 
     def mean_std(self):

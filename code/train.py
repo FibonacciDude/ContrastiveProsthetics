@@ -10,7 +10,7 @@ from constants import *
 from models import Model
 from pprint import pprint
 from time import time
-from utils import TaskWrapper
+from utils import TaskWrapper, BatchSampler
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 from torchsummary import summary
@@ -30,15 +30,16 @@ def test(model, dataset):
     model.set_test()
 
     total_loss = []
-    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=shuff)
+    loader=BatchSampler(dataset, batch_size=args.batch_size*2)
 
-    for (EMG, GLOVE, label) in loader:
+    for (EMG, GLOVE, label, domain) in loader:
         label=label.reshape(-1)
+        domain=domain.reshape(-1)
         with torch.no_grad():
-            #with amp.autocast():
-            logits=model.forward(EMG, GLOVE)
-            loss=model.loss(logits, label)
-            total_loss.append(loss.item())
+            with amp.autocast():
+                logits=model.forward(EMG, GLOVE, domain)
+                loss=model.loss(logits, label)
+                total_loss.append(loss.item())
 
     acc=model.correct()
     mean_loss=np.array(total_loss).mean()
@@ -49,15 +50,16 @@ def validate(model, dataset):
     model.set_val()
 
     total_loss = []
-    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=shuff)
+    loader=BatchSampler(dataset, batch_size=args.batch_size)
 
-    for (EMG, GLOVE, label) in tqdm(loader):
+    for (EMG, GLOVE, label, domain) in tqdm(loader):
         label=label.reshape(-1)
+        domain=domain.reshape(-1)
         with torch.no_grad():
-            #with amp.autocast():
-            logits=model.forward(EMG, GLOVE)
-            loss=model.loss(logits, label)
-            total_loss.append(loss.item())
+            with amp.autocast():
+                logits=model.forward(EMG, GLOVE, domain)
+                loss=model.loss(logits, label)
+                total_loss.append(loss.item())
 
     acc=model.correct()
     mean_loss=np.array(total_loss).mean()
@@ -72,7 +74,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
     if load is not None:
         print("Loading model")
-        model.load_state_dict(torch.load(checkpoint_dir+"%d.pt"%load))
+        model.load_state_dict(torch.load(load+".pt"))
 
     optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=0) # batchnorm wrong with AdamW
     if annealing:
@@ -84,7 +86,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     dataset.set_train()
     model.set_train()
 
-    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=shuff)
+    loader=BatchSampler(dataset, batch_size=args.batch_size)
 
     val_losses={}
     counter=0
@@ -93,16 +95,17 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     for e in trange(params['epochs']):
         
         loss_train=[]
-        for (EMG, GLOVE, label) in tqdm(loader):
+        for (EMG, GLOVE, label, domain) in tqdm(loader):
             label=label.reshape(-1)
-            #with amp.autocast():
-            logits=model.forward(EMG, GLOVE)
-            loss=model.loss(logits, label)
-            loss_train.append(loss.item())
-            loss=loss+model.l2()
-
+            domain=domain.reshape(-1)
+            with amp.autocast():
+                logits=model.forward(EMG, GLOVE, domain)
+                loss=model.loss(logits, label)
+                loss_train.append(loss.item())
+                loss=loss+model.l2()
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10)
             optimizer.step()
 
         acc_train=model.correct()
@@ -118,7 +121,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
         if checkpoint and loss_val <= max(list(val_losses.values())):
             print("Checkpointing model...")
-            torch.save(model.state_dict(), checkpoint_dir+"%d.pt"%counter)
+            torch.save(model.state_dict(), checkpoint_dir)
             counter+=1
 
         model.set_train()
@@ -205,7 +208,12 @@ def main(args):
             }
 
     print("Final training of model")
-    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_v8", verbose=args.no_verbose)
+    path="../checkpoints/model_window_strides_"
+    if args.model_load:
+        load="../checkpoints/model_window_10"+"1"
+    else:
+        load=None
+    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir=path, load=load, verbose=args.no_verbose)
     print("Final validation model statistics")
     print(final_vals)
 
@@ -223,6 +231,7 @@ if __name__=="__main__":
     parser.add_argument('--final_epochs', type=int, default=100)
     parser.add_argument('--glove', action='store_true')
     parser.add_argument('--crossval_load', action='store_true')
+    parser.add_argument('--model_load', action='store_true')
     parser.add_argument('--prediction', action='store_true')
     parser.add_argument('--no_adabn', action='store_false')
     parser.add_argument('--no_checkpoint', action='store_false')
