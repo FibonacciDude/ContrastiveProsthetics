@@ -89,8 +89,12 @@ class DB23(data.Dataset):
 
         # rectification might be problematic for real time software
         # filter raw signal - 20 Hz to 450 Hz
+        if args.debug:
+            for sensor in range(EMG_DIM):
+                plt.plot(emg_[:, sensor])
+            plt.show()
 
-        emg_=filter(emg_, (10, 75), butterworth_order=4,btype="bandpass")
+        emg_=filter(emg_, (20, 450), butterworth_order=4,btype="bandpass")
         emg_=rms(emg_)
         emg_=torchize(emg_[self.time_mask])
         return emg_
@@ -284,6 +288,8 @@ if __name__=="__main__":
     parser.add_argument('--complete', action='store_true')
     parser.add_argument('--no_glove', action='store_true')
     parser.add_argument('--minmax', action='store_true')
+    parser.add_argument('--debug', action='store_true')
+
     args = parser.parse_args()
 
     db=DB23()

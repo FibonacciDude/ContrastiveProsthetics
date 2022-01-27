@@ -36,10 +36,10 @@ def test(model, dataset):
         label=label.reshape(-1)
         domain=domain.reshape(-1)
         with torch.no_grad():
-            with amp.autocast():
-                logits=model.forward(EMG, GLOVE, domain)
-                loss=model.loss(logits, label)
-                total_loss.append(loss.item())
+            #with amp.autocast():
+            logits=model.forward(EMG, GLOVE, domain)
+            loss=model.loss(logits, label)
+            total_loss.append(loss.item())
 
     acc=model.correct()
     mean_loss=np.array(total_loss).mean()
@@ -56,10 +56,10 @@ def validate(model, dataset):
         label=label.reshape(-1)
         domain=domain.reshape(-1)
         with torch.no_grad():
-            with amp.autocast():
-                logits=model.forward(EMG, GLOVE, domain)
-                loss=model.loss(logits, label)
-                total_loss.append(loss.item())
+            #with amp.autocast():
+            logits=model.forward(EMG, GLOVE, domain)
+            loss=model.loss(logits, label)
+            total_loss.append(loss.item())
 
     acc=model.correct()
     mean_loss=np.array(total_loss).mean()
@@ -98,11 +98,13 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         for (EMG, GLOVE, label, domain) in tqdm(loader):
             label=label.reshape(-1)
             domain=domain.reshape(-1)
-            with amp.autocast():
-                logits=model.forward(EMG, GLOVE, domain)
-                loss=model.loss(logits, label)
-                loss_train.append(loss.item())
-                loss=loss+model.l2()
+
+            #with amp.autocast():
+            logits=model.forward(EMG, GLOVE, domain)
+            loss=model.loss(logits, label)
+            loss_train.append(loss.item())
+            loss=loss+model.l2()
+
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10)

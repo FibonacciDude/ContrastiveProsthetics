@@ -84,7 +84,7 @@ GLOVE_FACTOR=int(1/Hz_glove*Hz)
 GLOVE_WINDOW_SIZE=TOTAL_WINDOW_SIZE//GLOVE_FACTOR
 
 # instantaneous image (always, this won't change)
-WINDOW_MS=1*5
+WINDOW_MS=1*2
 WINDOW_STRIDE=1
 WINDOW_OUTPUT_DIM=FINAL_WINDOW_SIZE # for backward compatability
 

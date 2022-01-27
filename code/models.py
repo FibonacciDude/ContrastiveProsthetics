@@ -134,8 +134,8 @@ class Model(nn.Module):
         loss=self.loss_f(logits, labels)
         correct = (F.softmax(logits, dim=-1).detach().cpu().numpy().argmax(-1)==labels.cpu().numpy()).mean()
         self.corrects.append(correct.item())
-        if not self.train_model:
-            print(loss.cpu())
+        #if not self.train_model:
+        #    print(loss.cpu())
         return loss
         
     def loss(self, logits, labels):
@@ -179,7 +179,7 @@ class EMGNet(nn.Module):
 
         self.conv_emg=nn.Sequential(
                 # conv -> bn -> relu
-                #self.bn2d_func(1),
+                self.bn2d_func(1),
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
@@ -268,6 +268,7 @@ class EMGNet(nn.Module):
         if self.adabn:
             self.set_domain(domain)
 
+        #print(EMG.mean(), EMG.max(), EMG.std())
         out=EMG.reshape(-1, 1, WINDOW_MS, EMG_DIM)
         #out=self.simple(out)
         out=self.conv_emg(out)
