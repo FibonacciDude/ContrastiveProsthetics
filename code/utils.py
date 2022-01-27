@@ -10,9 +10,6 @@ import torch
 import line_profiler, builtins, atexit
 import torch.utils.data as data
 
-profile=line_profiler.LineProfiler()
-atexit.register(profile.print_stats)
-
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 np.random.seed(42)

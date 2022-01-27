@@ -15,10 +15,6 @@ from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 from torchsummary import summary
 
-import line_profiler, builtins, atexit
-profile=line_profiler.LineProfiler()
-atexit.register(profile.print_stats)
-
 torch.cuda.manual_seed(42)
 np.random.seed(42)
 torch.backends.cudnn.benchmark=True
@@ -30,7 +26,8 @@ def test(model, dataset):
     model.set_test()
 
     total_loss = []
-    loader=BatchSampler(dataset, batch_size=args.batch_size)
+    #loader=BatchSampler(dataset, batch_size=args.batch_size*2)
+    loader=
 
     for (EMG, GLOVE, label, domain) in loader:
         label=label.reshape(-1)
@@ -76,7 +73,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         print("Loading model")
         model.load_state_dict(torch.load(load+".pt"))
 
-    optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=0) # batchnorm wrong with AdamW
+    optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=0)
     if annealing:
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=0,verbose=True)
     else:
