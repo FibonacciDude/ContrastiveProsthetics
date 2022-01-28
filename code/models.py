@@ -90,9 +90,6 @@ class Model(nn.Module):
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1)/0.07)
         self.to(self.device)
 
-        self.correct_tr = []
-        self.correct_v = []
-
     def set_train(self):
         self.train_model=True
         self.train()
@@ -167,8 +164,10 @@ class Model(nn.Module):
             loss=(loss_e+loss_g)/2
         return loss
 
-    def correct(self):
-        return np.array(self.corrects).mean()
+    def correct(self, size=None):
+        if size is None:
+            return np.array(self.corrects[:]).mean()
+        return np.array(self.corrects[-size:]).mean()
 
     def l2(self):
         if self.prediction:
@@ -180,7 +179,8 @@ class EMGNet(nn.Module):
         super(EMGNet,self).__init__()
         self.device=torch.device(device)
         self.d_e=d_e
-        self.dp=dp
+        #self.dp=dp
+        self.dp=.5
         self.prediction=prediction
 
         if adabn:
@@ -199,11 +199,11 @@ class EMGNet(nn.Module):
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
-                nn.Conv2d(1,64,(1,3),padding=(0,1),bias=False),
+                nn.Conv2d(1,64,(3,3),padding=(1,1),bias=False),
                 self.bn2d_func(64),
                 nn.ReLU(),
 
-                nn.Conv2d(64,64,(1,3),padding=(0,1),bias=False),
+                nn.Conv2d(64,64,(3,3),padding=(1,1),bias=False),
                 self.bn2d_func(64),
                 nn.ReLU(),
 

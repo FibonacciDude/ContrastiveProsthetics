@@ -192,7 +192,7 @@ class DB23(data.Dataset):
     @property
     def OUTPUT_DIM(self):
         if self.train:
-            return int(WINDOW_OUTPUT_DIM/3)
+            return int(FINAL_WINDOW_SIZE)
         return int(PREDICTION_WINDOW_SIZE)
 
     def load_valid(self):

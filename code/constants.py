@@ -89,7 +89,6 @@ AMT_WINDOWS=FINAL_WINDOW_SIZE//WINDOW_MS
 
 GLOVE_DIM=22-2    # take out 11th sensor (noisy) and the 6th sensor (nans)
 EMG_DIM=12
-ACC_DIM=EMG_DIM*3
 
 PREFETCH=2
 NUM_WORKERS=0

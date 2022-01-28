@@ -22,6 +22,7 @@ atexit.register(profile.print_stats)
 torch.cuda.manual_seed(42)
 np.random.seed(42)
 torch.backends.cudnn.benchmark=True
+torch.backends.cudnn.deterministic=True
 torch.backends.cudnn.determinist=True
 shuff=True
 
@@ -105,7 +106,14 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
             loss.backward()
             optimizer.step()
 
-        acc_train=model.correct()
+            if verbose:
+                loss_val,acc_val=validate(model, dataset)
+                loss_train=np.array(loss_train).mean()
+                final_val_acc=(loss_val,acc_val)
+                val_losses[e]=loss_val
+                print("Epoch %d. Train loss: %.4f\tVal loss: %.4f\tVal acc: %.6f\tTrain acc: %.4f" % (e, loss_train, loss_val, acc_val, acc_train))
+
+        acc_train=model.correct(100)
 
         scheduler.step()
        
