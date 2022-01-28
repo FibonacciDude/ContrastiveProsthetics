@@ -96,9 +96,13 @@ class DB23(data.Dataset):
         emg_=rms(emg_)
 
         # normalize - this is not the same as the one done for ninapro db1 (change)
-        if not args.no_minmax:
-           a=2.5
-           emg_=(emg_+a*10**-6)/(2*(a*10**-6)) - .5
+        #if not args.no_minmax:
+        #   a=2.5
+        #   emg_=(emg_+a*10**-6)/(2*(a*10**-6))-.5
+        #else:
+        #u=2048
+        #emg_=np.sign(emg_) * np.log(1+u*np.abs(emg_))/np.log(1+u)
+        #emg_=emg_[WINDOW_EDGE:-WINDOW_EDGE]
 
         if args.debug:
             for sensor in range(EMG_DIM):
@@ -150,16 +154,22 @@ class DB23(data.Dataset):
                             self.emg_stats.push(emg)
                     EMG[i,stim,rep]=emg
 
-            #vals,idxs=EMG.flatten().sort()
-            #max_val=vals[int(.95*EMG.flatten().shape[0])]
-            #min_val=vals[int(.05*EMG.flatten().shape[0])]
-            #EMG=(EMG-min_val)/max_val
-
         if args.no_minmax:
             # normalize
             emg_means,emg_std=self.emg_stats.mean_std()
             print(emg_std)
             EMG=self.emg_stats.normalize(EMG)
+
+        else:
+            emg=EMG[self.people_mask]
+            emg=emg[:, self.tasks_mask]
+            emg=emg[:, :, self.rep_mask]
+
+            vals,idxs=emg.flatten().sort()
+            max_val=vals[int(.95*emg.flatten().shape[0])]
+            min_val=vals[int(.05*emg.flatten().shape[0])]
+            min_val,max_val=emg.min(),emg.max()
+            EMG=(EMG-min_val)/(max_val-min_val)
 
         print("Emg shape:", EMG.shape)
         #save
