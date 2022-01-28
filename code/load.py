@@ -76,6 +76,7 @@ class DB23(data.Dataset):
        emg=E_mat['emg']
 
        # do all preprocessing first (this adds a delay to the labels by a little, it should mostly be okay)
+       emg=filter(emg, 25, butterworth_order=1, btype="highpass")
        emg=filter(emg, 1, butterworth_order=1, btype="lowpass")
        # downsample second - doing it after stim/rep batch results in uneven samples
        emg=emg[::FACTOR]
