@@ -231,7 +231,8 @@ class Glover():
         self.angle_idxs=np.delete(self.angle_idxs, [5,10])
 
     def get_np(self, p_dir, n):
-        E_mat=sio.loadmat("/home/breezy/Downloads/s_%s_angles/S%s_E%s_A1"%(p_dir,p_dir,n))
+        import getpass
+        E_mat=sio.loadmat("/home/"+getpass.getuser()+"/Downloads/s_%s_angles/S%s_E%s_A1"%(p_dir,p_dir,n))
         angles=E_mat['angles'][:, self.angle_idxs]
         stimulus=E_mat['restimulus']
         repetition=E_mat['rerepetition']

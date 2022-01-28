@@ -71,9 +71,14 @@ class DB23(data.Dataset):
 
     def get_np(self, dbnum, p_dir, n):
        E_mat=sio.loadmat("../db%s/s%s/S%s_E%s_A1"%(dbnum,p_dir,p_dir,n))
+       stimulus=E_mat['restimulus'][::FACTOR]
+       repetition=E_mat['rerepetition'][::FACTOR]
        emg=E_mat['emg']
-       stimulus=E_mat['restimulus']
-       repetition=E_mat['rerepetition']
+
+       # do all preprocessing first (this adds a delay to the labels by a little, it should mostly be okay)
+       emg=filter(emg, 1, butterworth_order=1, btype="lowpass")
+       # downsample second - doing it after stim/rep batch results in uneven samples
+       emg=emg[::FACTOR]
        return emg, stimulus, repetition
 
 
@@ -85,18 +90,22 @@ class DB23(data.Dataset):
         stim_mask, rep_mask=(stim==stimulus), (rep==repetition)
         mask=(stim_mask&rep_mask).squeeze()
 
-        emg_=emg[mask][:TOTAL_WINDOW_SIZE+2*WINDOW_EDGE]
+        # move over by some in order to not have another stim/rep
+        # tweak window size compared to db1
+        emg_=emg[mask][:FINAL_WINDOW_SIZE+2*WINDOW_EDGE]
+        emg_=rms(emg_)
 
-        # rectification might be problematic for real time software
-        # filter raw signal - 20 Hz to 450 Hz
+        # normalize - this is not the same as the one done for ninapro db1 (change)
+        if not args.no_minmax:
+           a=2.5
+           emg_=(emg_+a*10**-6)/(2*(a*10**-6)) - .5
+
         if args.debug:
             for sensor in range(EMG_DIM):
                 plt.plot(emg_[:, sensor])
             plt.show()
 
-        emg_=filter(emg_, (20, 450), butterworth_order=4,btype="bandpass")
-        emg_=rms(emg_)
-        emg_=torchize(emg_[self.time_mask])
+        emg_=torchize(emg_)
         return emg_
 
     def load_dataset(self, glove=False):
@@ -111,8 +120,8 @@ class DB23(data.Dataset):
         global args
         print("People:", PEOPLE)
         print("Tasks (not including rest):" ,TASKS)
-        self.time_mask=np.arange(0,TOTAL_WINDOW_SIZE,FACTOR,dtype=np.uint8)
-        if not args.minmax:
+        self.time_mask=np.arange(FINAL_WINDOW_SIZE,dtype=np.uint8)
+        if args.no_minmax:
             self.emg_stats=RunningStats(PATH_DIR+"data/emg_", complete=args.complete)
         shape=(len(PEOPLE),MAX_TASKS,MAX_REPS,len(self.time_mask))
         EMG=torch.empty(shape+(EMG_DIM,), device=self.device)
@@ -136,23 +145,22 @@ class DB23(data.Dataset):
                 for stim in range(MAX_TASKS):
                     emg=self.get_stim_rep(stim,rep+1)
                     # only add if in the training set
-                    if not args.minmax:
+                    if args.no_minmax:
                         if ((person in TRAIN_PEOPLE) and (rep in self.reps_train) and (stim in TRAIN_TASKS or stim==0)):
                             self.emg_stats.push(emg)
                     EMG[i,stim,rep]=emg
 
-        if args.minmax:
-            #mV=2.5*10**-3
-            #EMG=(EMG+mV)/(mV*2)
-            vals,idxs=EMG.flatten().sort()
-            max_val=vals[int(.95*EMG.flatten().shape[0])]
-            min_val=vals[int(.05*EMG.flatten().shape[0])]
-            EMG=(EMG-min_val)/max_val
-        else:
+            #vals,idxs=EMG.flatten().sort()
+            #max_val=vals[int(.95*EMG.flatten().shape[0])]
+            #min_val=vals[int(.05*EMG.flatten().shape[0])]
+            #EMG=(EMG-min_val)/max_val
+
+        if args.no_minmax:
             # normalize
             emg_means,emg_std=self.emg_stats.mean_std()
             print(emg_std)
             EMG=self.emg_stats.normalize(EMG)
+
         print("Emg shape:", EMG.shape)
         #save
         self.save(EMG)
@@ -242,12 +250,6 @@ class DB23(data.Dataset):
         self.domain=self.people_mask[people_idx]      # the actual person
         return tensor
 
-    #def __getitem__(self, idx):
-    #    if self.raw:
-    #        return self.EMG
-    #    EMG=self.slice_batch(idx)
-    #    return EMG
-
 def load(db,glove=False):
     db.load_dataset(glove=glove)
 
@@ -287,7 +289,7 @@ if __name__=="__main__":
     parser.add_argument('--info', action='store_true')
     parser.add_argument('--complete', action='store_true')
     parser.add_argument('--no_glove', action='store_true')
-    parser.add_argument('--minmax', action='store_true')
+    parser.add_argument('--no_minmax', action='store_true')
     parser.add_argument('--debug', action='store_true')
 
     args = parser.parse_args()

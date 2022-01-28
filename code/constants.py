@@ -67,7 +67,9 @@ FACTOR=int(Hz/DOWNSAMPLE)
 
 #RMS_WINDOW=int(np.ceil(150 * Hz / 2048))
 # If RMS_WINDOW is equivalent to the DOWNSAMPLE rate, there are no overlapping windows. This would be preferable for online data.
-RMS_WINDOW=DOWNSAMPLE
+
+# in downsample space!
+RMS_WINDOW=11
 WINDOW_EDGE=(RMS_WINDOW-1)//2
 
 # in ms
@@ -84,7 +86,7 @@ GLOVE_FACTOR=int(1/Hz_glove*Hz)
 GLOVE_WINDOW_SIZE=TOTAL_WINDOW_SIZE//GLOVE_FACTOR
 
 # instantaneous image (always, this won't change)
-WINDOW_MS=1*2
+WINDOW_MS=1
 WINDOW_STRIDE=1
 WINDOW_OUTPUT_DIM=FINAL_WINDOW_SIZE # for backward compatability
 
