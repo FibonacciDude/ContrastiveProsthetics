@@ -186,8 +186,14 @@ def main(args):
     best_key = keys[best_val]
     print("Best combination: %s" % str(best_key))
 
+    best_key=list(
+    {'lr': 9.669146694016019e-05, 'reg_emg': 1.7657783300900343, 'dp_emg': 0.3380246573759496, 'reg_glove': 0.00194728028897675, 'dp_glove': 0.4090869582909959}.values()
+            )
+    lr, reg_e, dp_e, reg_g, dp_g = best_key     # best model during validation
+    d_e=int(des[0])
+
     # test model
-    d_e, lr, reg_e, dp_e, reg_g, dp_g = best_key     # best model during validation
+    #d_e, lr, reg_e, dp_e, reg_g, dp_g = best_key     # best model during validation
 
     params = {
             'd_e' : int(d_e),
@@ -212,10 +218,10 @@ def main(args):
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Training on ninapro dataset')
-    parser.add_argument('--crossval_size', type=int, default=100)
+    parser.add_argument('--crossval_size', type=int, default=20)
     parser.add_argument('--crossval_epochs', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--final_epochs', type=int, default=100)
+    parser.add_argument('--final_epochs', type=int, default=10)
     parser.add_argument('--glove', action='store_true')
     parser.add_argument('--crossval_load', action='store_true')
     parser.add_argument('--prediction', action='store_true')

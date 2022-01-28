@@ -167,6 +167,8 @@ class DB23(data.Dataset):
     @property
     def people_mask(self):
         return self.people_train if (self.train or self.val) else self.people_test
+        # same subject classification
+        #return torchize([41])
 
     @property
     def rep_mask(self):
