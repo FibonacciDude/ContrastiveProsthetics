@@ -93,11 +93,12 @@ class DB23(data.Dataset):
         # move over by some in order to not have another stim/rep
         # tweak window size compared to db1
         #emg_=emg[mask][:FINAL_WINDOW_SIZE+2*WINDOW_EDGE]
-        #emg_=rms(emg_)
 
         # let's get the middle of the data (not the borders like crazy people - especially since we are doing instantaneous images...)
         val=(mask.sum()-FINAL_WINDOW_SIZE)
-        emg_=emg[mask][math.floor(val/2):FINAL_WINDOW_SIZE+math.ceil(val/2)-val%2]
+        emg_=emg[mask]
+        emg_=rms(emg_)
+        emg_=emg_[math.floor(val/2):FINAL_WINDOW_SIZE+math.ceil(val/2)-val%2]
 
         # normalize - this is not the same as the one done for ninapro db1 (change)
         #if not args.no_minmax:
