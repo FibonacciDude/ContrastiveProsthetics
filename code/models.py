@@ -141,7 +141,7 @@ class Model(nn.Module):
         return loss
 
     def prediction_loss(self, logits, labels):
-        if not self.training:
+        if not self.training and VOTE:
             shape=logits.shape
             assert len(shape)==3, "wrong logit shape for val time"
             labels_=labels.reshape(-1, labels.max()+1, 1).expand(-1, labels.max()+1, logits.shape[1]).flatten().to(torch.long)
@@ -152,7 +152,7 @@ class Model(nn.Module):
         loss=self.loss_f(logits_, labels_)
 
         prediction=F.softmax(logits, dim=-1).argmax(-1)
-        if self.training:
+        if self.training or not VOTE:
             correct = (prediction.detach().cpu().numpy()==labels_.cpu().numpy())
         else:
             # majority voting in action
@@ -263,7 +263,7 @@ class EMGNet(nn.Module):
         out=self.conv_emg(out)
         out=self.linear(out)
         out=self.last(out)
-        if not self.training:
+        if not self.training and VOTE:
             out=out.reshape((-1, shape[2], self.bits))
         return out
 

@@ -62,6 +62,11 @@ class DB23(data.Dataset):
         self.val=False
         self.load_valid()
 
+    def pretrain(self):
+        self.pretrain=True
+
+    def finetune(self):
+        self.pretrain=False
 
     def load_stored(self):
         self.EMG=torch.load(PATH_DIR+'data/emg.pt', map_location=self.device)
@@ -175,11 +180,11 @@ class DB23(data.Dataset):
     @property
     def rep_mask(self):
         if self.train:
-            return torch.cat((self.rep_train, self.rep_val))
-            #return self.rep_train
+            #return torch.cat((self.rep_train, self.rep_val))
+            return self.rep_train
         elif self.val:
             #return torch.cat((self.rep_test, self.rep_val))
-            # not too representative (just to see what is what)
+            # not representative (just to see what is what)
             return self.rep_val ##test
         else:
             return self.rep_test
@@ -202,31 +207,35 @@ class DB23(data.Dataset):
             return self.PEOPLE*self.REPS*self.OUTPUT_DIM
         else:
             # we will have entire voting window for ourselves
-            return self.PEOPLE*self.REPS # *self.OUTPUT_DIM
+            return self.PEOPLE*self.REPS*(AMT_PREDICTION_WINDOWS if VOTE else self.OUTPUT_DIM)
 
 
     @property
     def OUTPUT_DIM(self):
+        # this is a mess now
         if self.train:
-            return int(WINDOW_OUTPUT_DIM)
-        return int(PREDICTION_WINDOW_SIZE)
+            return WINDOW_OUTPUT_DIM
+        #return PREDICTION_WINDOW_SIZE
+        return WINDOW_OUTPUT_DIM if not VOTE else PREDICTION_WINDOW_SIZE
 
     def load_valid(self):
         tensor=self.EMG[self.tasks_mask][:, self.people_mask][:, :, self.rep_mask]
-        tensor_=tensor[:, :, :, :self.OUTPUT_DIM]
+        tensor_=tensor[:, :, :, :WINDOW_OUTPUT_DIM]
         # tasks x people x rep -> tasks*(people*rep*output_dim)
         self.EMG_use=tensor_.reshape(-1, EMG_DIM)
 
         # use self.tensor for majority voting
+        #self.tensor=tensor_.reshape(-1, AMT_PREDICTION_WINDOWS, PREDICTION_WINDOW_SIZE, EMG_DIM)
+        print(tensor_.shape)
         self.tensor=tensor_.reshape(-1, self.OUTPUT_DIM, EMG_DIM)
 
-        if self.train:
+        if self.train or not VOTE:
             a=self.EMG_use[self.D*2+1]
             b=tensor_[2].reshape(-1,EMG_DIM)[1]
             assert torch.equal(a, b), "indexing is not correct"
         else:
             a=self.tensor[self.D*2+1]
-            b=tensor_[2].reshape(-1,self.OUTPUT_DIM, EMG_DIM)[1]
+            b=tensor_[2].reshape(-1, self.OUTPUT_DIM, EMG_DIM)[1]
             assert torch.equal(a, b), "indexing is not correct"
 
         self.glover.load_valid(self.tasks_mask)
@@ -242,7 +251,7 @@ class DB23(data.Dataset):
     def __getitem__(self, idx):
         if self.raw:
             return self.EMG
-        if not self.train:
+        if not self.train and VOTE:
             #EMG=self.slice_batch(idx)
             EMG=self.tensor[idx, :, :]
         else:

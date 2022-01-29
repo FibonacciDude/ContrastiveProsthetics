@@ -205,10 +205,19 @@ def main(args):
             'reg_glove' : reg_g
             }
 
-    print("Final training of model")
-    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_v8", verbose=args.no_verbose)
+    print("Final training of model - pretraining")
+    #dataset23.pretrain()
+    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_pre", verbose=args.no_verbose)
     print("Final validation model statistics")
-    print(final_vals)
+
+    """
+    print("Final training of model - finetuning")
+    dataset23.finetune()
+    # make learning rate smaller
+    params['lr'] = params['lr'] / 10
+    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_fine", verbose=args.no_verbose)
+    print("Final validation model statistics")
+    """
 
     if args.test:
         # not until very very end
