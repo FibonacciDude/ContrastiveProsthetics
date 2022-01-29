@@ -196,16 +196,18 @@ def main(args):
     params = {
             'd_e' : int(d_e),
             'epochs' : args.final_epochs,
-            'lr_emg' : lr_e / 10,
+            'lr_emg' : lr_e * (1/10 if args.load_model else 1),
             'dp_emg' : dp_e,
             'reg_emg' : reg_e,
-            'lr_glove' : lr_g / 10,
+            'lr_glove' : lr_g * (1/10 if args.load_model else 1),
             'dp_glove' : dp_g,
             'reg_glove' : reg_g
             }
     checkpoint_dir = "../checkpoints/contrastive"
     final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir=checkpoint_dir, verbose=args.no_verbose, load=checkpoint_dir if args.load_model else None)
     print("Final validation model statistics")
+
+    model.load_state_dict(torch.load(checkpoint_dir+".pt"))
 
     if args.test:
         # not until very very end

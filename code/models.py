@@ -221,6 +221,10 @@ class EMGNet(nn.Module):
         self.conv_emg=nn.Sequential(
                 # conv -> bn -> relu
                 #self.bn2d_func(1),
+                # Dropout for the input
+                nn.Flatten(),
+                #nn.Dropout(.075),
+                nn.Unflatten(-1, (1, 1,EMG_DIM)),
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel

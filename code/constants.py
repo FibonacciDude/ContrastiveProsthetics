@@ -16,8 +16,9 @@ ORIGINAL_D3=PEOPLE_D3.copy()
 MAX_PEOPLE=MAX_PEOPLE_D2+MAX_PEOPLE_D3
 
 # add so that it can stay constant without randomization of dataset
-NEW_PEOPLE=4
-NEW_TASKS=3
+NEW_PEOPLE=1
+#NEW_TASKS=3
+NEW_TASKS=1
 
 d2_idxs=np.random.permutation(MAX_PEOPLE_D2)
 d3_idxs=np.random.permutation(MAX_PEOPLE_D3)

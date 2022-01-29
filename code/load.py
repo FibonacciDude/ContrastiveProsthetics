@@ -156,7 +156,8 @@ class DB23(data.Dataset):
     @property
     def tasks_mask(self):
         #tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
-        tasks_mask=self.tasks_train
+        #tasks_mask=self.tasks_train
+        tasks_mask=self.tasks
         tasks_mask=torch.cat((tasks_mask, torchize([0])))
         return tasks_mask
 
@@ -171,10 +172,12 @@ class DB23(data.Dataset):
         #if self.pretrain:
         #    return self.people_train
         #return self.people_test
-        return torchize(d3_idxs)
+
+        #return torchize(d3_idxs+len(d2_idxs))
+
         #if self.train or self.val:
-            #return torchize(d3_idxs)[:-2]
-        #return torchize(d3_idxs)[-2:]
+        return torchize(d3_idxs+len(d2_idxs))
+        #return torchize(d3_idxs+len(d2_idxs))[-2:]
         #return torchize(d3_idxs+len(d2_idxs))
             #return torchize(d2_idxs[:-1])
         #return torchize(d2_idxs[-1:]+len(d2_idxs))
@@ -254,6 +257,10 @@ class DB23(data.Dataset):
             EMG=self.tensor[idx, :, :].unsqueeze(2)
         else:
             EMG=self.slice_batch(idx)
+        #if not self.train:
+            # drop!
+            #EMG[:, :, :, -2] = 0
+            #pass
         return EMG
 
 def load(db,glove=False):
