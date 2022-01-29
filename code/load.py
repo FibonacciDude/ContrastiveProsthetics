@@ -166,6 +166,7 @@ class DB23(data.Dataset):
         # test is in train (no subject generalization, YET)
         return torch.cat((self.people_train, self.people_test)) if (self.train or self.val) else self.people_test
         # within subject classification
+        #return [12]
 
         #if self.pretrain:
         #    return self.people_train

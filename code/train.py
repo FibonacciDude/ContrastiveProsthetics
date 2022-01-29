@@ -54,7 +54,7 @@ def validate(model, dataset):
         label=label.reshape(-1)
         with torch.no_grad():
             #with amp.autocast():
-            logits=model.forward(EMG, GLOVE)
+            logits=model.forward(EMG, GLOVE, label)
             loss=model.loss(logits, label)
             total_loss.append(loss.item())
 
@@ -93,7 +93,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         for (EMG, GLOVE, label) in tqdm(loader):
             label=label.reshape(-1)
             #with amp.autocast():
-            logits=model.forward(EMG, GLOVE)
+            logits=model.forward(EMG, GLOVE, label)
             loss=model.loss(logits, label)
             loss_train.append(loss.item())
             loss=loss+model.l2()

@@ -103,26 +103,27 @@ class Model(nn.Module):
     def encode_emg(self, EMG):
         return self.emg_net(EMG)
 
-    def encode_glove(self, GLOVE):
-        return self.glove_net(GLOVE)
+    def encode_glove(self, GLOVE, labels):
+        return self.glove_net(GLOVE, labels)
 
-    def forward(self, EMG, GLOVE):
+    def forward(self, EMG, GLOVE, labels):
         if self.prediction:
             if self.glove:
-                features = self.encode_glove(GLOVE)
+                features = self.encode_glove(GLOVE, labels)
             else:
                 features = self.encode_emg(EMG)
             features = features / features.norm(dim=-1,keepdim=True)
             return features
         else:
             emg_features = self.encode_emg(EMG)
+            norm=emg_features.reshape(-1, EMG.shape[1]).norm(dim=-1)
             emg_features = emg_features / emg_features.norm(dim=-1,keepdim=True)
-            glove_features = self.encode_glove(GLOVE)
+            glove_features = self.encode_glove(GLOVE, labels)
             glove_features = glove_features / glove_features.norm(dim=-1,keepdim=True)
             # becomes (N, d_e, tasks)
             glove_features_t = glove_features.transpose(1,2)
             # (N, tasks_e, d_e) x (N, d_e, tasks_g) -> (N, tasks_e, tasks_g)
-            logits=torch.bmm(emg_features, glove_features_t) * self.logit_scale
+            logits=torch.bmm(emg_features, glove_features_t) #* self.logit_scale
             return logits
 
     def contrastive_loopy_loss(self, logits, labels, acc=False):
@@ -130,24 +131,29 @@ class Model(nn.Module):
         correct=torchize([0]).to(torch.float)
 
         shape=self.emg_net.shape
+
         if not self.training and VOTE:
             logits=logits.reshape((shape[0], shape[2], shape[1], shape[1]))
             times=shape[2]
         else:
             times=1
 
+        bs=logits.shape[0]
+        tasks=logits.shape[-1]
         for log in logits:
-            loss = loss + self.loss_f(log.reshape(-1, shape[1]), torch.cat([labels[:log.shape[-1]]]*times)   )
+            loss = loss + self.loss_f( log.reshape(-1, tasks), torch.cat([labels[:tasks]]*times)   )
             if acc:
                 pred=F.softmax(log, dim=-1).argmax(-1)
+                #"""
                 if not self.training and VOTE:
                     pred=pred.mode(0)[0]
-                equal=(pred==labels[:log.shape[-1]]).cpu().numpy()
+                #"""
+                equal=(pred==labels[:tasks]).cpu().numpy()
                 correct += equal.mean()
-        loss=loss/np.prod(logits.shape[0])
+        loss=loss/bs
         if acc:
             # correct for the values we want (predicting grasp from emg)
-            correct=correct/logits.shape[0]
+            correct=correct/bs
             self.corrects.append(correct.item())
         return loss
 
@@ -278,8 +284,9 @@ class EMGNet(nn.Module):
         out=self.conv_emg(out)
         out=self.linear(out)
         out=self.last(out)
-        vote=not self.training and VOTE
         shape=self.shape
+        """
+        vote=not self.training and VOTE
         if vote:
             if self.prediction:
                 out=out.reshape((-1, shape[2], self.bits))
@@ -287,7 +294,11 @@ class EMGNet(nn.Module):
                 out=out.reshape((shape[0], shape[1], shape[2], self.bits))
                 out=out.transpose(1,2)  # 32,20,38,bits
                 out=out.reshape((-1, shape[1], self.bits))
+        """
         if not self.prediction:
+            out=out.reshape((shape[0], -1, self.bits))
+            out=out.reshape((shape[0], shape[1], shape[2], self.bits))
+            out=out.transpose(1,2)  # 32,20,38,bits
             out=out.reshape((-1, shape[1], self.bits))
         return out
 
@@ -333,8 +344,8 @@ class GLOVENet(nn.Module):
 
         self.linear = nn.Sequential(
                 nn.Flatten(),
-                nn.Linear(GLOVE_DIM, 10),
-                nn.Linear(10, GLOVE_DIM),
+                #nn.Linear(GLOVE_DIM, 10),
+                #nn.Linear(10, GLOVE_DIM),
 
                 nn.Linear(GLOVE_DIM, 512//2),
                 nn.ReLU(),
@@ -357,6 +368,9 @@ class GLOVENet(nn.Module):
                 )
 
         self.bits=MAX_TASKS_TRAIN if self.prediction else self.d_e
+        self.easy = nn.Sequential(
+                nn.Linear(MAX_TASKS_TRAIN, self.d_e),
+                )
         if self.prediction:
             self.last = nn.Sequential(
                     nn.Linear(512//2, 128),
@@ -374,7 +388,9 @@ class GLOVENet(nn.Module):
 
         self.to(self.device)
 
-    def forward(self, GLOVE):
+    def forward(self, GLOVE, labels):
+
+        """
         out=GLOVE.reshape(-1, 1, 1, GLOVE_DIM)
         out=self.conv_glove(out)
         out=self.linear(out)
@@ -384,8 +400,23 @@ class GLOVENet(nn.Module):
             # reshape back
             out=out.reshape((GLOVE.shape[0], -1, self.bits))
             shape=out.shape
-            if vote:
-                out=out.reshape((shape[0], 1, shape[1], shape[2])).expand(-1, PREDICTION_WINDOW_SIZE, -1, -1).reshape(-1, shape[1], self.bits)
+            #if vote:
+            #    out=out.reshape((shape[0], 1, shape[1], shape[2])).expand(-1, PREDICTION_WINDOW_SIZE, -1, -1).reshape(-1, shape[1], self.bits)
+        """
+        shape=GLOVE.shape
+
+        if self.prediction:
+            out=GLOVE.reshape(-1, 1, 1, GLOVE_DIM)
+            out=self.conv_glove(out)
+            out=self.linear(out)
+            out=self.last(out)
+            return out
+
+        hot=torch.nn.functional.one_hot(labels)
+        out=self.easy(hot.to(torch.float32))
+        out=out.reshape((shape[0], -1, self.bits))
+        if not self.training and VOTE:
+            out=out.reshape((shape[0], 1, shape[1], self.bits)).expand(-1, PREDICTION_WINDOW_SIZE, -1, -1).reshape(-1, shape[1], self.bits)
         return out
 
     def l2(self):
