@@ -54,7 +54,6 @@ REPS=[1,3,4,6,2,5]
 MAX_REPS=len(REPS)
 # change this back with pretraining
 REPS_TRAIN=REPS[:-2]
-#REPS_VAL=REPS[-1:]
 REPS_TEST=REPS[-2:]
 
 PATH_DIR="/home/breezy/hci/prosthetics/db23/"

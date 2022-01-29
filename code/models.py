@@ -107,7 +107,6 @@ class Model(nn.Module):
         return self.glove_net(GLOVE)
 
     def forward(self, EMG, GLOVE):
-        #ipdb.set_trace()
         if self.prediction:
             if self.glove:
                 features = self.encode_glove(GLOVE)
@@ -123,16 +122,28 @@ class Model(nn.Module):
             # becomes (N, d_e, tasks)
             glove_features_t = glove_features.transpose(1,2)
             # (N, tasks_e, d_e) x (N, d_e, tasks_g) -> (N, tasks_e, tasks_g)
-            logits=torch.bmm(emg_features * 100, glove_features_t * 100) * self.logit_scale
+            logits=torch.bmm(emg_features, glove_features_t) * self.logit_scale
             return logits
 
     def contrastive_loopy_loss(self, logits, labels, acc=False):
         loss=torchize([0])
         correct=torchize([0]).to(torch.float)
+
+        shape=self.emg_net.shape
+        if not self.training and VOTE:
+            logits=logits.reshape((shape[0], shape[2], shape[1], shape[1]))
+            times=shape[2]
+        else:
+            times=1
+
         for log in logits:
-            loss = loss + self.loss_f(log, labels[:log.shape[0]])
+            loss = loss + self.loss_f(log.reshape(-1, shape[1]), torch.cat([labels[:log.shape[-1]]]*times)   )
             if acc:
-                correct += (F.softmax(log, dim=-1).detach().cpu().numpy().argmax(-1)==labels[:log.shape[0]].cpu().numpy()).mean()
+                pred=F.softmax(log, dim=-1).argmax(-1)
+                if not self.training and VOTE:
+                    pred=pred.mode(0)[0]
+                equal=(pred==labels[:log.shape[-1]]).cpu().numpy()
+                correct += equal.mean()
         loss=loss/np.prod(logits.shape[0])
         if acc:
             # correct for the values we want (predicting grasp from emg)
@@ -262,13 +273,22 @@ class EMGNet(nn.Module):
         self.to(self.device)
 
     def forward(self, EMG):
-        shape=EMG.shape
+        self.shape=EMG.shape
         out=EMG.reshape(-1, 1, 1, EMG_DIM)
         out=self.conv_emg(out)
         out=self.linear(out)
         out=self.last(out)
-        if not self.training and VOTE:
-            out=out.reshape((-1, shape[2], self.bits))
+        vote=not self.training and VOTE
+        shape=self.shape
+        if vote:
+            if self.prediction:
+                out=out.reshape((-1, shape[2], self.bits))
+            else:
+                out=out.reshape((shape[0], shape[1], shape[2], self.bits))
+                out=out.transpose(1,2)  # 32,20,38,bits
+                out=out.reshape((-1, shape[1], self.bits))
+        if not self.prediction:
+            out=out.reshape((-1, shape[1], self.bits))
         return out
 
     def l2(self):
@@ -313,12 +333,17 @@ class GLOVENet(nn.Module):
 
         self.linear = nn.Sequential(
                 nn.Flatten(),
-                nn.Linear(GLOVE_DIM, 8),
-                nn.Linear(8, GLOVE_DIM),
+                nn.Linear(GLOVE_DIM, 10),
+                nn.Linear(10, GLOVE_DIM),
 
                 nn.Linear(GLOVE_DIM, 512//2),
                 nn.ReLU(),
                 self.bn1d_func(512//2),
+
+                nn.Linear(512//2, 512//2),
+                nn.ReLU(),
+                self.bn1d_func(512//2),
+                nn.Dropout(self.dp),
 
                 nn.Linear(512//2, 512//2),
                 nn.ReLU(),
@@ -331,6 +356,7 @@ class GLOVENet(nn.Module):
                 nn.Dropout(self.dp),
                 )
 
+        self.bits=MAX_TASKS_TRAIN if self.prediction else self.d_e
         if self.prediction:
             self.last = nn.Sequential(
                     nn.Linear(512//2, 128),
@@ -338,12 +364,12 @@ class GLOVENet(nn.Module):
                     self.bn1d_func(128),
                     nn.Dropout(self.dp),
 
-                    nn.Linear(128, MAX_TASKS_TRAIN, bias=False),
+                    nn.Linear(128, self.bits, bias=False),
                     )
         else:
             self.last = nn.Sequential(
                     # projection
-                    nn.Linear(512//2, self.d_e, bias=False),
+                    nn.Linear(512//2, self.bits, bias=False),
                     )
 
         self.to(self.device)
@@ -352,10 +378,14 @@ class GLOVENet(nn.Module):
         out=GLOVE.reshape(-1, 1, 1, GLOVE_DIM)
         out=self.conv_glove(out)
         out=self.linear(out)
+        out=self.last(out)
+        vote=not self.training and VOTE
         if not self.prediction:
             # reshape back
-            out=out.reshape((GLOVE.shape[0], GLOVE.shape[1], -1))
-        out=self.last(out)
+            out=out.reshape((GLOVE.shape[0], -1, self.bits))
+            shape=out.shape
+            if vote:
+                out=out.reshape((shape[0], 1, shape[1], shape[2])).expand(-1, PREDICTION_WINDOW_SIZE, -1, -1).reshape(-1, shape[1], self.bits)
         return out
 
     def l2(self):

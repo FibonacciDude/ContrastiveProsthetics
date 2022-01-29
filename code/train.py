@@ -69,11 +69,13 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         print("Loading model")
         model.load_state_dict(torch.load(load+".pt"))
 
-    optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=0) # batchnorm wrong with AdamW
-    if annealing:
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=0,verbose=False)
-    else:
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10**4, gamma=1, verbose=False)
+    optimizer_emg = optim.Adam(model.emg_net.parameters(), lr=params['lr_emg'], weight_decay=0) # batchnorm wrong with AdamW
+    optimizer_glove = optim.Adam(model.glove_net.parameters(), lr=params['lr_glove'], weight_decay=0) # batchnorm wrong with AdamW
+
+    #if annealing:
+    #    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=0,verbose=False)
+    #else:
+    #    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10**4, gamma=1, verbose=False)
 
     # train data
     dataset.set_train()
@@ -96,13 +98,16 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
             loss_train.append(loss.item())
             loss=loss+model.l2()
 
-            optimizer.zero_grad(set_to_none=True)
+            optimizer_emg.zero_grad(set_to_none=True)
+            optimizer_glove.zero_grad(set_to_none=True)
             loss.backward()
-            optimizer.step()
+
+            optimizer_emg.step()
+            optimizer_glove.step()
 
         acc_train=model.correct()
 
-        scheduler.step()
+        #scheduler.step()
        
         if verbose:
             loss_val,acc_val=validate(model, dataset)
@@ -119,7 +124,6 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
         model.set_train()
         dataset.set_train()
-
 
     if not verbose:
         loss_val,acc_val=validate(model, dataset)
@@ -165,17 +169,19 @@ def main(args):
     print("Dataset loaded")
     dataset23=TaskWrapper(dataset23)
 
-    lrs = 10**np.random.uniform(low=-6, high=-1, size=(args.crossval_size,))
+    lrs_emg = 10**np.random.uniform(low=-6, high=-1, size=(args.crossval_size,))
     regs_emg = 10**np.random.uniform(low=-9, high=-1, size=(args.crossval_size,))
     dps_emg = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
+    lrs_glove = 10**np.random.uniform(low=-6, high=-1, size=(args.crossval_size,))
     regs_glove = 10**np.random.uniform(low=-9, high=-1, size=(args.crossval_size,))
     dps_glove = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
     des=[16]
 
     hyperparams = {
-            'lr' : lrs,
+            'lr_emg' : lrs_emg,
             'reg_emg' : regs_emg,
             'dp_emg' : dps_emg,
+            'lr_glove': lrs_glove,
             'reg_glove' : regs_glove,
             'dp_glove' : dps_glove,
             }
@@ -186,18 +192,18 @@ def main(args):
     best_key = keys[best_val]
     print("Best combination: %s" % str(best_key))
     # test model
-    d_e, lr, reg_e, dp_e, reg_g, dp_g = best_key     # best model during validation
+    d_e, lr_e, reg_e, dp_e, lr_g, reg_g, dp_g = best_key     # best model during validation
     params = {
             'd_e' : int(d_e),
             'epochs' : args.final_epochs,
-            'lr' : lr,
+            'lr_emg' : lr_e,
             'dp_emg' : dp_e,
             'reg_emg' : reg_e,
+            'lr_glove' : lr_g,
             'dp_glove' : dp_g,
             'reg_glove' : reg_g
             }
-    print("Final training of model - pretraining -------------------------------------------------------")
-    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_pre", verbose=args.no_verbose)
+    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/contrastive", verbose=args.no_verbose)
     print("Final validation model statistics")
 
     if args.test:

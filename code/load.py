@@ -155,8 +155,8 @@ class DB23(data.Dataset):
             
     @property
     def tasks_mask(self):
-        tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
-        #tasks_mask=self.tasks_train
+        #tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
+        tasks_mask=self.tasks_train
         tasks_mask=torch.cat((tasks_mask, torchize([0])))
         return tasks_mask
 
@@ -246,7 +246,7 @@ class DB23(data.Dataset):
             return self.EMG
         if not self.train and VOTE:
             #EMG=self.slice_batch(idx)
-            EMG=self.tensor[idx, :, :]
+            EMG=self.tensor[idx, :, :].unsqueeze(2)
         else:
             EMG=self.slice_batch(idx)
         return EMG
