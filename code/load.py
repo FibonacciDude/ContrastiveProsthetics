@@ -21,11 +21,12 @@ torch.cuda.manual_seed(42)
 np.random.seed(42)
 
 class DB23(data.Dataset):
-    def __init__(self, train=True, val=False):
+    def __init__(self, db2=False, train=True, val=False):
         self.device=torch.device("cuda")
         self.train=train
         self.val=val
         self.raw=False
+        self.db2=db2
 
         self.tasks_train=torchize(TRAIN_TASKS)
         self.tasks_test=torchize(TEST_TASKS)
@@ -176,7 +177,11 @@ class DB23(data.Dataset):
         #return torchize(d3_idxs+len(d2_idxs))
 
         #if self.train or self.val:
-        return torchize(d3_idxs+len(d2_idxs))
+        if self.db2:
+            return torchize(d2_idxs)
+        else:
+            return torchize(d3_idxs+len(d2_idxs))
+
         #return torchize(d3_idxs+len(d2_idxs))[-2:]
         #return torchize(d3_idxs+len(d2_idxs))
             #return torchize(d2_idxs[:-1])
@@ -185,12 +190,15 @@ class DB23(data.Dataset):
     @property
     def rep_mask(self):
         if self.train:
+            if self.db2:
+                return torch.cat((self.rep_train, self.rep_test))
             return self.rep_train
-            #return torch.cat((self.rep_train, self.rep_test))
         elif self.val:
             return self.rep_val
         else:
             #return self.reps
+            if self.db2:
+                return self.rep_val
             return self.rep_test
 
     @property

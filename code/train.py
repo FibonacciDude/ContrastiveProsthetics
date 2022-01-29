@@ -163,7 +163,7 @@ def cross_validate(des, hyperparams, dataset, id_, epochs=6, save=True, load=Fal
     return values, keys
 
 def main(args):
-    dataset23 = DB23()
+    dataset23 = DB23(db2=args.db2)
     print("Loading dataset")
     dataset23.load_stored()
     print("Dataset loaded")
@@ -249,6 +249,7 @@ if __name__=="__main__":
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--final_epochs', type=int, default=10)
     parser.add_argument('--glove', action='store_true')
+    parser.add_argument('--db2', action='store_true')
     parser.add_argument('--load_model', action='store_true')
     parser.add_argument('--crossval_load', action='store_true')
     parser.add_argument('--prediction', action='store_true')
