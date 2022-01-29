@@ -29,7 +29,7 @@ def test(model, dataset):
     model.set_test()
 
     total_loss = []
-    loader=data.DataLoader(dataset, batch_size=args.batch_size, shuffle=shuff)
+    loader=data.DataLoader(dataset, batch_size=args.batch_size*8, shuffle=shuff)
 
     for (EMG, GLOVE, label) in loader:
         label=label.reshape(-1)
@@ -171,7 +171,9 @@ def main(args):
 
     lrs_emg = 10**np.random.uniform(low=-6, high=-1, size=(args.crossval_size,))
     regs_emg = 10**np.random.uniform(low=-9, high=-1, size=(args.crossval_size,))
-    dps_emg = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
+    #dps_emg = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
+    dps_emg = np.random.uniform(low=.4, high=.6, size=(args.crossval_size,))
+    #dps_emg = np.array([.5]*args.crossval_size)
     lrs_glove = 10**np.random.uniform(low=-6, high=-1, size=(args.crossval_size,))
     regs_glove = 10**np.random.uniform(low=-9, high=-1, size=(args.crossval_size,))
     dps_glove = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))

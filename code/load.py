@@ -176,10 +176,10 @@ class DB23(data.Dataset):
 
         #return torchize(d3_idxs+len(d2_idxs))
 
-        #if self.train or self.val:
         if self.db2:
             return torchize(d2_idxs)
         else:
+            #if self.train or self.val:
             return torchize(d3_idxs+len(d2_idxs))
 
         #return torchize(d3_idxs+len(d2_idxs))[-2:]

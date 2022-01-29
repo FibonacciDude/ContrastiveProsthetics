@@ -99,6 +99,9 @@ class Model(nn.Module):
 
     def reset(self):
         self.corrects = []
+        self.voting = []
+        self.y_pred = []
+        self.y_true = []
 
     def encode_emg(self, EMG):
         return self.emg_net(EMG)
@@ -144,12 +147,24 @@ class Model(nn.Module):
             loss = loss + self.loss_f( log.reshape(-1, tasks), torch.cat([labels[:tasks]]*times)   )
             if acc:
                 pred=F.softmax(log, dim=-1).argmax(-1)
-                #"""
+
                 if not self.training and VOTE:
-                    pred=pred.mode(0)[0]
-                #"""
-                equal=(pred==labels[:tasks]).cpu().numpy()
-                correct += equal.mean()
+                    voting_window=[]
+                    for win in range(1, PREDICTION_WINDOW):
+                        pred_=pred[:win].mode(0)[0]
+                        equal=(pred_==labels[:tasks]).cpu().numpy().mean()
+                        voting_window.append(equal)
+
+                    self.voting.append(voting_window)
+                    # for the last voting (150 ms window)
+                    self.y_pred.append(pred_.cpu().numpy())
+                    self.y_true.append(labels[:tasks].cpu().numpy())
+
+                    equal=voting_window[-1]
+                else:
+                    equal=(pred==labels[:tasks]).cpu().numpy().mean()
+                correct += equal
+                
         loss=loss/bs
         if acc:
             # correct for the values we want (predicting grasp from emg)
@@ -194,6 +209,18 @@ class Model(nn.Module):
 
     def correct(self):
         return np.array(self.corrects).mean()
+
+    def correct_raw(self):
+        return np.array(self.corrects)
+
+    def voting_raw(self):
+        return np.array(self.voting)
+
+    def y_pred_raw(self):
+        return np.array(self.y_pred)
+
+    def y_true_raw(self):
+        return np.array(self.y_true)
 
     def l2(self):
         if self.prediction:
@@ -251,6 +278,7 @@ class EMGNet(nn.Module):
                 nn.Linear(512, 512),
                 nn.ReLU(),
                 self.bn1d_func(512),
+                nn.Dropout(self.dp),
 
                 nn.Linear(512, 512),
                 nn.ReLU(),
