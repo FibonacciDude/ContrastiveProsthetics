@@ -21,7 +21,7 @@ atexit.register(profile.print_stats)
 torch.cuda.manual_seed(42)
 np.random.seed(42)
 torch.backends.cudnn.benchmark=True
-torch.backends.cudnn.determinist=True
+#torch.backends.cudnn.deterministic=True
 shuff=True
 
 def test(model, dataset):
@@ -29,7 +29,7 @@ def test(model, dataset):
     model.set_test()
 
     total_loss = []
-    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=shuff)
+    loader=data.DataLoader(dataset, batch_size=args.batch_size, shuffle=shuff)
 
     for (EMG, GLOVE, label) in loader:
         label=label.reshape(-1)
@@ -48,7 +48,7 @@ def validate(model, dataset):
     model.set_val()
 
     total_loss = []
-    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=shuff)
+    loader=data.DataLoader(dataset, batch_size=args.batch_size, shuffle=shuff)
 
     for (EMG, GLOVE, label) in tqdm(loader):
         label=label.reshape(-1)
@@ -67,7 +67,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
     if load is not None:
         print("Loading model")
-        model.load_state_dict(torch.load(checkpoint_dir+"%d.pt"%load))
+        model.load_state_dict(torch.load(load+".pt"))
 
     optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=0) # batchnorm wrong with AdamW
     if annealing:
@@ -79,7 +79,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     dataset.set_train()
     model.set_train()
 
-    loader=data.DataLoader(dataset, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH, batch_size=args.batch_size, shuffle=shuff)
+    loader=data.DataLoader(dataset, batch_size=args.batch_size, shuffle=shuff)
 
     val_losses={}
     counter=0
@@ -113,7 +113,8 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
         if checkpoint and loss_val <= max(list(val_losses.values())):
             print("Checkpointing model...")
-            torch.save(model.state_dict(), checkpoint_dir+"%d.pt"%counter)
+            #torch.save(model.state_dict(), checkpoint_dir+"%d.pt"%counter)
+            torch.save(model.state_dict(), checkpoint_dir+".pt")
             counter+=1
 
         model.set_train()
@@ -129,7 +130,7 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
     return final_val_acc, model
 
-def cross_validate(des, hyperparams, dataset, epochs=6, save=True, load=False):
+def cross_validate(des, hyperparams, dataset, id_, epochs=6, save=True, load=False, load_dir=None):
     cross_val={}
     if not load:
         for d_e in des:
@@ -143,17 +144,17 @@ def cross_validate(des, hyperparams, dataset, epochs=6, save=True, load=False):
                         'epochs' : epochs,
                         }
                 params.update(current)
-                (loss_t,acc_t),model=train_loop(dataset, params, checkpoint=False, verbose=False)
+                (loss_t,acc_t),model=train_loop(dataset, params, checkpoint=False, verbose=False, load=load_dir)
                 cross_val[(d_e,)+tuple(hypervals)]=(loss_t,acc_t)
 
         values = np.array(list(cross_val.values()))
         keys = np.array(list(cross_val.keys()))
         if save:
-            np.save("../data/cross_val_values.npy", values)
-            np.save("../data/cross_val_keys.npy", keys)
+            np.save("../data/cross_val_values%s.npy"%id_, values)
+            np.save("../data/cross_val_keys%s.npy"%id_, keys)
     else:
-        values=np.load("../data/cross_val_values.npy")
-        keys=np.load("../data/cross_val_keys.npy")
+        values=np.load("../data/cross_val_values%s.npy"%id_)
+        keys=np.load("../data/cross_val_keys%s.npy"%id_)
 
     return values, keys
 
@@ -164,10 +165,10 @@ def main(args):
     print("Dataset loaded")
     dataset23=TaskWrapper(dataset23)
 
-    lrs = 10**np.random.uniform(low=-6, high=0, size=(args.crossval_size,))
-    regs_emg = 10**np.random.uniform(low=-9, high=1, size=(args.crossval_size,))
+    lrs = 10**np.random.uniform(low=-6, high=-1, size=(args.crossval_size,))
+    regs_emg = 10**np.random.uniform(low=-9, high=-1, size=(args.crossval_size,))
     dps_emg = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
-    regs_glove = 10**np.random.uniform(low=-9, high=1, size=(args.crossval_size,))
+    regs_glove = 10**np.random.uniform(low=-9, high=-1, size=(args.crossval_size,))
     dps_glove = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
     des=[16]
 
@@ -179,22 +180,15 @@ def main(args):
             'dp_glove' : dps_glove,
             }
 
-    values, keys = cross_validate(des, hyperparams, dataset23, epochs=args.crossval_epochs, save=True, load=args.crossval_load)
-
+    # pretraining --------------------------------------------------
+    print("Final training of model - pretraining -------------------------------------------------------")
+    values, keys = cross_validate(des, hyperparams, dataset23, id_="", epochs=args.crossval_epochs, save=True, load=args.crossval_load)
     # get best
     best_val = np.nanargmax(values[:, 1])
     best_key = keys[best_val]
     print("Best combination: %s" % str(best_key))
-
-    #best_key=list(
-    #{'lr': 9.669146694016019e-05, 'reg_emg': 1.7657783300900343, 'dp_emg': 0.3380246573759496, 'reg_glove': 0.00194728028897675, 'dp_glove': 0.4090869582909959}.values())
-    #lr, reg_e, dp_e, reg_g, dp_g = best_key # best model during validation
-    #d_e=int(des[0])
-
-
     # test model
     d_e, lr, reg_e, dp_e, reg_g, dp_g = best_key     # best model during validation
-
     params = {
             'd_e' : int(d_e),
             'epochs' : args.final_epochs,
@@ -205,19 +199,30 @@ def main(args):
             'reg_glove' : reg_g
             }
 
-    print("Final training of model - pretraining")
-    #dataset23.pretrain()
-    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_pre", verbose=args.no_verbose)
-    print("Final validation model statistics")
+    # finetuning --------------------------------------------------
+    # crossval load disabled
+    print("Final training of model - finetuning -------------------------------------------------------")
+    values, keys = cross_validate(des, hyperparams, dataset23, id_="_finetune", epochs=args.crossval_epochs, save=True, load=False, load_dir="../checkpoints/model_pre")
+    # get best
+    best_val = np.nanargmax(values[:, 1])
+    best_key = keys[best_val]
+    print("Best combination: %s" % str(best_key))
+    # test model
+    d_e, lr, reg_e, dp_e, reg_g, dp_g = best_key     # best model during validation
+    params = {
+            'd_e' : int(d_e),
+            'epochs' : args.final_epochs,
+            'lr' : lr,
+            'dp_emg' : dp_e,
+            'reg_emg' : reg_e,
+            'dp_glove' : dp_g,
+            'reg_glove' : reg_g
+            }
 
-    """
-    print("Final training of model - finetuning")
     dataset23.finetune()
-    # make learning rate smaller
-    params['lr'] = params['lr'] / 10
-    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_fine", verbose=args.no_verbose)
+    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_fine", verbose=args.no_verbose,
+            load="../checkpoints/model_pre")
     print("Final validation model statistics")
-    """
 
     if args.test:
         # not until very very end
@@ -225,9 +230,36 @@ def main(args):
         print("loss,\t\t\tcorrect")
         print(final_stats)
 
+        
+    # if all these change, the train set must change too (see how to edit such that the dataset includes all train)
+
+    # solve - data info class or something (where???)
+        # simple thing where you give it the model and the raw logits (stored...somewhere) - if we have
+        # the logits, everything else is quite simple
+
+        # add features of taking weird average and stuff between these models (in some way)
+
+    # one crossvalidation -> use approximate values for training all models (might not be optimal...)
+
+    # a few things to vary (if we want to): (args 1,2,3,4...)
+        # rep split
+        # subjects
+        # tasks
+
+    # show values:
+        # per class accuracy (mean, std)
+        # unbiased micro
+        # biased macro (mean, std)
+        # per person accuracy (and get std)
+        # precision, recall, f1, etc...
+        # curve of time taken vs accuracy of voting scheme prediction
+    # get values:
+        # time taken for forward pass
+        # mean and std of the dataset (for all datasets) -> this will get overridden if we have multiple of them...
+
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Training on ninapro dataset')
-    parser.add_argument('--crossval_size', type=int, default=20)
+    parser.add_argument('--crossval_size', type=int, default=10)
     parser.add_argument('--crossval_epochs', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--final_epochs', type=int, default=10)

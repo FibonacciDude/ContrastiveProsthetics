@@ -12,7 +12,7 @@ import ipdb
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 np.random.seed(42)
-torch.backends.cudnn.determinist=True
+#torch.backends.cudnn.deterministic=True
 
 class AdaBatchNorm1d(nn.Module):
     # No code for the online mean/std at test time yet...
@@ -207,11 +207,11 @@ class EMGNet(nn.Module):
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
-                nn.Conv2d(1,64,(1,3),padding=(0,1)),
+                nn.Conv2d(1,64,(3,3),padding=(1,1)),
                 nn.ReLU(),
                 self.bn2d_func(64),
 
-                nn.Conv2d(64,64,(1,3),padding=(0,1)),
+                nn.Conv2d(64,64,(3,3),padding=(1,1)),
                 nn.ReLU(),
                 self.bn2d_func(64),
 
@@ -220,6 +220,10 @@ class EMGNet(nn.Module):
 
         self.linear = nn.Sequential(
                 nn.Linear(EMG_DIM*64, 512),
+                nn.ReLU(),
+                self.bn1d_func(512),
+
+                nn.Linear(512, 512),
                 nn.ReLU(),
                 self.bn1d_func(512),
 

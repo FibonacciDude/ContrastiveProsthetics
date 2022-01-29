@@ -35,8 +35,8 @@ class DB23(data.Dataset):
         self.people_test=torchize(TEST_PEOPLE_IDXS)
         self.people=torchize(PEOPLE_IDXS)
 
-        train_reps = torchize(TRAIN_REPS)
-        test_reps = torchize(TEST_REPS)
+        train_reps = torchize(REPS_TRAIN)
+        test_reps = torchize(REPS_TEST)
         reps = torchize(REPS)
 
         self.rep_train=train_reps[:-1]-1
@@ -164,30 +164,42 @@ class DB23(data.Dataset):
         #tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
         #tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks_test[:1]
         # TODO: change back to all tasks
+        #return tasks_mask[-8:]
         tasks_mask=self.tasks_train
         tasks_mask=torch.cat((tasks_mask, torchize([0])))
-        return tasks_mask[-8:]
-        #return tasks_mask
+        return tasks_mask
 
     @property
     def people_mask(self):
         #return self.people_train if (self.train or self.val) else self.people_test
         # test is in train (no subject generalization, YET)
-        return torch.cat((self.people_train, self.people_test)) if (self.train or self.val) else self.people_test
+        #return torch.cat((self.people_train, self.people_test)) if (self.train or self.val) else self.people_test
         # same subject classification
-        #return torchize([41,0,1])
+        if self.pretrain:
+            #return self.people_train
+        #return self.people_test
+            return torchize(d2_idxs)
+        return torchize(d3_idxs+len(d2_idxs))
+            #return torchize(d2_idxs[:-1])
+        #return torchize(d2_idxs[-1:]+len(d2_idxs))
 
     @property
     def rep_mask(self):
-        if self.train:
-            #return torch.cat((self.rep_train, self.rep_val))
-            return self.rep_train
-        elif self.val:
-            #return torch.cat((self.rep_test, self.rep_val))
-            # not representative (just to see what is what)
-            return self.rep_val ##test
+        if self.pretrain:
+            # there is not test set for this one (just the same validation)
+            if self.train:
+                return torch.cat((self.rep_train, self.rep_test))
+            elif self.val:
+                return self.rep_val
+            else:
+                return self.rep_val
         else:
-            return self.rep_test
+            if self.train:
+                return self.rep_train
+            elif self.val:
+                return self.rep_val
+            else:
+                return self.rep_test
 
     @property
     def PEOPLE(self):
@@ -215,7 +227,6 @@ class DB23(data.Dataset):
         # this is a mess now
         if self.train:
             return WINDOW_OUTPUT_DIM
-        #return PREDICTION_WINDOW_SIZE
         return WINDOW_OUTPUT_DIM if not VOTE else PREDICTION_WINDOW_SIZE
 
     def load_valid(self):
@@ -225,8 +236,6 @@ class DB23(data.Dataset):
         self.EMG_use=tensor_.reshape(-1, EMG_DIM)
 
         # use self.tensor for majority voting
-        #self.tensor=tensor_.reshape(-1, AMT_PREDICTION_WINDOWS, PREDICTION_WINDOW_SIZE, EMG_DIM)
-        print(tensor_.shape)
         self.tensor=tensor_.reshape(-1, self.OUTPUT_DIM, EMG_DIM)
 
         if self.train or not VOTE:
