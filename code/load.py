@@ -38,7 +38,9 @@ class DB23(data.Dataset):
 
         self.reps=torchize(REPS)-1
         self.reps_train=torchize(REPS_TRAIN)-1
-        self.reps_val=torchize(REPS_VAL)-1
+        self.reps_train=self.reps_train[:-1]
+        self.reps_val=self.reps_train[-1:]
+        self.reps_test=torchize(REPS_TEST)
 
         # own little dataset
         self.glover=Glover()
