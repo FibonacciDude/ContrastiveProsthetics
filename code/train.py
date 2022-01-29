@@ -169,11 +169,11 @@ def main(args):
     print("Dataset loaded")
     dataset23=TaskWrapper(dataset23)
 
-    lrs_emg = 10**np.random.uniform(low=-7, high=-2, size=(args.crossval_size,))
-    regs_emg = 10**np.random.uniform(low=-9, high=-4, size=(args.crossval_size,))
+    lrs_emg = 10**np.random.uniform(low=-6, high=-1, size=(args.crossval_size,))
+    regs_emg = 10**np.random.uniform(low=-9, high=-1, size=(args.crossval_size,))
     dps_emg = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
-    lrs_glove = 10**np.random.uniform(low=-6, high=-4, size=(args.crossval_size,))
-    regs_glove = 10**np.random.uniform(low=-9, high=-4, size=(args.crossval_size,))
+    lrs_glove = 10**np.random.uniform(low=-6, high=-1, size=(args.crossval_size,))
+    regs_glove = 10**np.random.uniform(low=-9, high=-1, size=(args.crossval_size,))
     dps_glove = np.random.uniform(low=0, high=.9, size=(args.crossval_size,))
     des=[16]
 
