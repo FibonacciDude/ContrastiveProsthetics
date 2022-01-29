@@ -141,8 +141,25 @@ class Model(nn.Module):
         return loss
 
     def prediction_loss(self, logits, labels):
-        loss=self.loss_f(logits, labels)
-        correct = (F.softmax(logits, dim=-1).detach().cpu().numpy().argmax(-1)==labels.cpu().numpy()).mean()
+        if not self.training:
+            shape=logits.shape
+            assert len(shape)==3, "wrong logit shape for val time"
+            labels_=labels.reshape(-1, labels.max()+1, 1).expand(-1, labels.max()+1, logits.shape[1]).flatten().to(torch.long)
+            logits_=logits.reshape(-1, self.emg_net.bits)
+        else:
+            labels_=labels
+            logits_=logits
+        loss=self.loss_f(logits_, labels_)
+
+        prediction=F.softmax(logits, dim=-1).argmax(-1)
+        if self.training:
+            correct = (prediction.detach().cpu().numpy()==labels_.cpu().numpy())
+        else:
+            # majority voting in action
+            maj_vote=prediction.mode(1)[0]
+            correct = (maj_vote.detach().cpu().numpy()==labels.cpu().numpy())
+        correct = correct.mean()
+
         self.corrects.append(correct.item())
         return loss
         
@@ -222,15 +239,17 @@ class EMGNet(nn.Module):
                 )
 
         if self.prediction:
+            self.bits=MAX_TASKS_TRAIN
             self.last = nn.Sequential(
                     nn.Linear(512, 128),
                     nn.ReLU(),
                     self.bn1d_func(128),
                     nn.Dropout(self.dp),
 
-                    nn.Linear(128, MAX_TASKS_TRAIN, bias=False),
+                    nn.Linear(128, self.bits, bias=False),
                     )
         else:
+            self.bits=self.d_e
             self.last = nn.Sequential(
                     # projection
                     nn.Linear(512, self.d_e, bias=False),
@@ -239,13 +258,13 @@ class EMGNet(nn.Module):
         self.to(self.device)
 
     def forward(self, EMG):
+        shape=EMG.shape
         out=EMG.reshape(-1, 1, 1, EMG_DIM)
         out=self.conv_emg(out)
         out=self.linear(out)
-        if not self.prediction:
-            # reshape back
-            out=out.reshape((EMG.shape[0], EMG.shape[1], -1))
         out=self.last(out)
+        if not self.training:
+            out=out.reshape((-1, shape[2], self.bits))
         return out
 
     def l2(self):

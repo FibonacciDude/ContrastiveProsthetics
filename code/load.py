@@ -82,7 +82,6 @@ class DB23(data.Dataset):
        repetition=E_mat['rerepetition']
        return emg, stimulus, repetition
 
-
     def get_stim_rep(self, stimulus, repetition):
         # stimulus from 1-40, repetition from 1-6
         ex=np.searchsorted(TASK_DIST.cumsum(), stimulus)
@@ -162,22 +161,28 @@ class DB23(data.Dataset):
         # TODO: change back to all tasks
         tasks_mask=self.tasks_train
         tasks_mask=torch.cat((tasks_mask, torchize([0])))
-        return tasks_mask
+        return tasks_mask[-8:]
+        #return tasks_mask
 
     @property
     def people_mask(self):
-        return self.people_train if (self.train or self.val) else self.people_test
+        #return self.people_train if (self.train or self.val) else self.people_test
+        # test is in train (no subject generalization, YET)
+        return torch.cat((self.people_train, self.people_test)) if (self.train or self.val) else self.people_test
         # same subject classification
         #return torchize([41,0,1])
 
     @property
     def rep_mask(self):
         if self.train:
-            return self.rep_train
+            return torch.cat((self.rep_train, self.rep_val))
+            #return self.rep_train
         elif self.val:
-            return torch.cat((self.rep_test, self.rep_val))
+            #return torch.cat((self.rep_test, self.rep_val))
+            # not too representative (just to see what is what)
+            return self.rep_val ##test
         else:
-            return self.reps
+            return self.rep_test
 
     @property
     def PEOPLE(self):
@@ -193,7 +198,11 @@ class DB23(data.Dataset):
         
     @property
     def D(self):
-        return self.PEOPLE*self.REPS*self.OUTPUT_DIM
+        if self.train:
+            return self.PEOPLE*self.REPS*self.OUTPUT_DIM
+        else:
+            # we will have entire voting window for ourselves
+            return self.PEOPLE*self.REPS # *self.OUTPUT_DIM
 
 
     @property
@@ -204,12 +213,22 @@ class DB23(data.Dataset):
 
     def load_valid(self):
         tensor=self.EMG[self.tasks_mask][:, self.people_mask][:, :, self.rep_mask]
-        tensor=tensor[:, :, :, :self.OUTPUT_DIM]
+        tensor_=tensor[:, :, :, :self.OUTPUT_DIM]
         # tasks x people x rep -> tasks*(people*rep*output_dim)
-        self.EMG_use=tensor.reshape(-1, EMG_DIM)
-        a=self.EMG_use[self.D*2+1]
-        b=tensor[2].reshape(-1,EMG_DIM)[1]
-        assert torch.equal(a, b), "indexing is not correct"
+        self.EMG_use=tensor_.reshape(-1, EMG_DIM)
+
+        # use self.tensor for majority voting
+        self.tensor=tensor_.reshape(-1, self.OUTPUT_DIM, EMG_DIM)
+
+        if self.train:
+            a=self.EMG_use[self.D*2+1]
+            b=tensor_[2].reshape(-1,EMG_DIM)[1]
+            assert torch.equal(a, b), "indexing is not correct"
+        else:
+            a=self.tensor[self.D*2+1]
+            b=tensor_[2].reshape(-1,self.OUTPUT_DIM, EMG_DIM)[1]
+            assert torch.equal(a, b), "indexing is not correct"
+
         self.glover.load_valid(self.tasks_mask)
 
     def __len__(self):
@@ -223,7 +242,11 @@ class DB23(data.Dataset):
     def __getitem__(self, idx):
         if self.raw:
             return self.EMG
-        EMG=self.slice_batch(idx)
+        if not self.train:
+            #EMG=self.slice_batch(idx)
+            EMG=self.tensor[idx, :, :]
+        else:
+            EMG=self.slice_batch(idx)
         return EMG
 
 def load(db,glove=False):

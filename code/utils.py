@@ -25,11 +25,15 @@ class TaskWrapper():
         # you need to set_....() in order to make it create rand
         #self.reset()
         
+    #def return_rand(self, D):
+    #    self.rand = torch.empty((self.dataset.TASKS, D), device=self.device, dtype=torch.long)
+    #    for t in range(self.dataset.TASKS):
+    #        self.rand[t] = torch.randperm(D, dtype=torch.long, device=self.device)+D*t
+    #    return self.rand
+
     def return_rand(self, D):
-        self.rand = torch.empty((self.dataset.TASKS, D), device=self.device, dtype=torch.long)
-        for t in range(self.dataset.TASKS):
-            self.rand[t] = torch.randperm(D, dtype=torch.long, device=self.device)+D*t
-        return self.rand
+        b=torch.arange(self.dataset.TASKS, device=self.device, dtype=torch.long).reshape(self.dataset.TASKS,1)*D
+        return torch.rand((self.dataset.TASKS, D), device=self.device).argsort(dim=-1)+b
 
     def reset(self):
         self.emg_rand=self.return_rand(self.dataset.D)
