@@ -72,10 +72,12 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
     optimizer_emg = optim.Adam(model.emg_net.parameters(), lr=params['lr_emg'], weight_decay=0)
     optimizer_glove = optim.Adam(model.glove_net.parameters(), lr=params['lr_glove'], weight_decay=0)
 
-    #if annealing:
-    #    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=0,verbose=False)
-    #else:
-    #    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10**4, gamma=1, verbose=False)
+    if annealing:
+        scheduler_emg = optim.lr_scheduler.CosineAnnealingLR(optimizer_emg, T_max=args.final_epochs, eta_min=0, verbose=False)
+        scheduler_glove = optim.lr_scheduler.CosineAnnealingLR(optimizer_glove, T_max=args.final_epochs, eta_min=0, verbose=False)
+    else:
+        scheduler_emg = optim.lr_scheduler.StepLR(optimizer_glove, step_size=5, gamma=.2, verbose=False)
+        scheduler_glove = optim.lr_scheduler.StepLR(optimizer_glove, step_size=5, gamma=.2, verbose=False)
 
     # train data
     dataset.set_train()
@@ -107,7 +109,8 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
         acc_train=model.correct()
 
-        #scheduler.step()
+        scheduler_emg.step()
+        scheduler_glove.step()
        
         if verbose:
             loss_val,acc_val=validate(model, dataset)

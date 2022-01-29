@@ -40,7 +40,7 @@ def test(model, dataset, save="../data/"):
             logs.append(logits)
 
     # this is the RAW logits (for logits)
-    logs = torch.cat(logs)..detach().cpu().numpy()
+    logs = torch.cat(logs).detach().cpu().numpy()
     np.save(save+"logs.npy", logs)
     acc=model.correct()
     mean_loss=np.array(total_loss).mean()
@@ -59,6 +59,7 @@ def test(model, dataset, save="../data/"):
     # confusion matrix
     confusion_matrix = me.confusion_matrix(y_true, y_pred)
     np.save(save+"voting.npy", voting)
+    print(confusion_matrix)
 
     return mean_loss, acc
 
@@ -69,14 +70,14 @@ def main(args):
     print("Dataset loaded")
     dataset23=TaskWrapper(dataset23)
 
+    model = Model(params=params, train_model=True, adabn=args.no_adabn, prediction=args.prediction, glove=args.glove, device="cuda").to(torch.float32)
+
     checkpoint_dir = "../checkpoints/contrastive"
     model.load_state_dict(torch.load(checkpoint_dir+".pt"))
 
-    if args.test:
-        # not until very very end
-        final_stats=test(model, dataset23)
-        print("loss,\t\t\tcorrect")
-        print(final_stats)
+    final_stats=test(model, dataset23)
+    print("loss,\t\t\tcorrect")
+    print(final_stats)
 
         
     # if all these change, the train set must change too (see how to edit such that the dataset includes all train)

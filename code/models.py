@@ -249,9 +249,6 @@ class EMGNet(nn.Module):
                 # conv -> bn -> relu
                 #self.bn2d_func(1),
                 # Dropout for the input
-                nn.Flatten(),
-                #nn.Dropout(.075),
-                nn.Unflatten(-1, (1, 1,EMG_DIM)),
 
                 # prevent premature fusion (https://www.mdpi.com/2071-1050/10/6/1865/htm) 
                 # larger kernel
@@ -278,6 +275,15 @@ class EMGNet(nn.Module):
                 nn.Linear(512, 512),
                 nn.ReLU(),
                 self.bn1d_func(512),
+
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                self.bn1d_func(512),
+                nn.Dropout(self.dp),
+
+                nn.Linear(512, 512),
+                nn.ReLU(),
+                self.bn1d_func(512),
                 nn.Dropout(self.dp),
 
                 nn.Linear(512, 512),
@@ -297,7 +303,7 @@ class EMGNet(nn.Module):
                     nn.Linear(512, 128),
                     nn.ReLU(),
                     self.bn1d_func(128),
-                    nn.Dropout(self.dp),
+                    #nn.Dropout(self.dp),
 
                     nn.Linear(128, self.bits, bias=False),
                     )
