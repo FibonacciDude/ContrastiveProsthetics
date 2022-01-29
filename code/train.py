@@ -196,14 +196,15 @@ def main(args):
     params = {
             'd_e' : int(d_e),
             'epochs' : args.final_epochs,
-            'lr_emg' : lr_e,
+            'lr_emg' : lr_e / 10,
             'dp_emg' : dp_e,
             'reg_emg' : reg_e,
-            'lr_glove' : lr_g,
+            'lr_glove' : lr_g / 10,
             'dp_glove' : dp_g,
             'reg_glove' : reg_g
             }
-    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/contrastive", verbose=args.no_verbose)
+    checkpoint_dir = "../checkpoints/contrastive"
+    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir=checkpoint_dir, verbose=args.no_verbose, load=checkpoint_dir if args.load_model else None)
     print("Final validation model statistics")
 
     if args.test:
@@ -246,6 +247,7 @@ if __name__=="__main__":
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--final_epochs', type=int, default=10)
     parser.add_argument('--glove', action='store_true')
+    parser.add_argument('--load_model', action='store_true')
     parser.add_argument('--crossval_load', action='store_true')
     parser.add_argument('--prediction', action='store_true')
     parser.add_argument('--no_adabn', action='store_false')

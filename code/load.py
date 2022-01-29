@@ -171,7 +171,10 @@ class DB23(data.Dataset):
         #if self.pretrain:
         #    return self.people_train
         #return self.people_test
-        return torchize(d2_idxs)
+        return torchize(d3_idxs)
+        #if self.train or self.val:
+            #return torchize(d3_idxs)[:-2]
+        #return torchize(d3_idxs)[-2:]
         #return torchize(d3_idxs+len(d2_idxs))
             #return torchize(d2_idxs[:-1])
         #return torchize(d2_idxs[-1:]+len(d2_idxs))
@@ -180,10 +183,11 @@ class DB23(data.Dataset):
     def rep_mask(self):
         if self.train:
             return self.rep_train
-            #return torch.cat(self.rep_train, self.rep_test)
+            #return torch.cat((self.rep_train, self.rep_test))
         elif self.val:
             return self.rep_val
         else:
+            #return self.reps
             return self.rep_test
 
     @property

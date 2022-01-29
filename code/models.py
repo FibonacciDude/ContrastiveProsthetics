@@ -405,6 +405,7 @@ class GLOVENet(nn.Module):
             #if vote:
             #    out=out.reshape((shape[0], 1, shape[1], shape[2])).expand(-1, PREDICTION_WINDOW_SIZE, -1, -1).reshape(-1, shape[1], self.bits)
         """
+
         shape=GLOVE.shape
         out=GLOVE.reshape(-1, 1, 1, GLOVE_DIM)
 
