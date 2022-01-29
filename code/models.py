@@ -141,7 +141,7 @@ class Model(nn.Module):
         return loss
 
     def prediction_loss(self, logits, labels):
-        if not self.training and VOTE:
+        if not self.training and VOTE and not self.glove:
             shape=logits.shape
             assert len(shape)==3, "wrong logit shape for val time"
             labels_=labels.reshape(-1, labels.max()+1, 1).expand(-1, labels.max()+1, logits.shape[1]).flatten().to(torch.long)
@@ -152,7 +152,7 @@ class Model(nn.Module):
         loss=self.loss_f(logits_, labels_)
 
         prediction=F.softmax(logits, dim=-1).argmax(-1)
-        if self.training or not VOTE:
+        if self.training or not VOTE or self.glove:
             correct = (prediction.detach().cpu().numpy()==labels_.cpu().numpy())
         else:
             # majority voting in action
@@ -313,8 +313,9 @@ class GLOVENet(nn.Module):
 
         self.linear = nn.Sequential(
                 nn.Flatten(),
+                nn.Linear(GLOVE_DIM, 8),
+                nn.Linear(8, GLOVE_DIM),
 
-                #nn.Linear(GLOVE_DIM*64, 512),
                 nn.Linear(GLOVE_DIM, 512//2),
                 nn.ReLU(),
                 self.bn1d_func(512//2),
@@ -324,10 +325,10 @@ class GLOVENet(nn.Module):
                 self.bn1d_func(512//2),
                 nn.Dropout(self.dp),
 
-                #nn.Linear(512, 512),
-                #nn.ReLU(), 
-                #self.bn1d_func(512),
-                #nn.Dropout(self.dp),
+                nn.Linear(512//2, 512//2),
+                nn.ReLU(), 
+                self.bn1d_func(512//2),
+                nn.Dropout(self.dp),
                 )
 
         if self.prediction:
@@ -342,7 +343,7 @@ class GLOVENet(nn.Module):
         else:
             self.last = nn.Sequential(
                     # projection
-                    nn.Linear(512, self.d_e, bias=False),
+                    nn.Linear(512//2, self.d_e, bias=False),
                     )
 
         self.to(self.device)

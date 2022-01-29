@@ -71,9 +71,9 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
 
     optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=0) # batchnorm wrong with AdamW
     if annealing:
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=0,verbose=True)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=0,verbose=False)
     else:
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10**4, gamma=1, verbose=True)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10**4, gamma=1, verbose=False)
 
     # train data
     dataset.set_train()
@@ -180,8 +180,6 @@ def main(args):
             'dp_glove' : dps_glove,
             }
 
-    # pretraining --------------------------------------------------
-    print("Final training of model - pretraining -------------------------------------------------------")
     values, keys = cross_validate(des, hyperparams, dataset23, id_="", epochs=args.crossval_epochs, save=True, load=args.crossval_load)
     # get best
     best_val = np.nanargmax(values[:, 1])
@@ -198,30 +196,8 @@ def main(args):
             'dp_glove' : dp_g,
             'reg_glove' : reg_g
             }
-
-    # finetuning --------------------------------------------------
-    # crossval load disabled
-    print("Final training of model - finetuning -------------------------------------------------------")
-    values, keys = cross_validate(des, hyperparams, dataset23, id_="_finetune", epochs=args.crossval_epochs, save=True, load=False, load_dir="../checkpoints/model_pre")
-    # get best
-    best_val = np.nanargmax(values[:, 1])
-    best_key = keys[best_val]
-    print("Best combination: %s" % str(best_key))
-    # test model
-    d_e, lr, reg_e, dp_e, reg_g, dp_g = best_key     # best model during validation
-    params = {
-            'd_e' : int(d_e),
-            'epochs' : args.final_epochs,
-            'lr' : lr,
-            'dp_emg' : dp_e,
-            'reg_emg' : reg_e,
-            'dp_glove' : dp_g,
-            'reg_glove' : reg_g
-            }
-
-    dataset23.finetune()
-    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_fine", verbose=args.no_verbose,
-            load="../checkpoints/model_pre")
+    print("Final training of model - pretraining -------------------------------------------------------")
+    final_vals, model = train_loop(dataset23, params, checkpoint=args.no_checkpoint, annealing=True, checkpoint_dir="../checkpoints/model_pre", verbose=args.no_verbose)
     print("Final validation model statistics")
 
     if args.test:

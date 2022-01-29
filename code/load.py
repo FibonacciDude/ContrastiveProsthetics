@@ -62,12 +62,6 @@ class DB23(data.Dataset):
         self.val=False
         self.load_valid()
 
-    def pretrain(self):
-        self.pretrain=True
-
-    def finetune(self):
-        self.pretrain=False
-
     def load_stored(self):
         self.EMG=torch.load(PATH_DIR+'data/emg.pt', map_location=self.device)
         self.EMG.cuda()
@@ -161,11 +155,8 @@ class DB23(data.Dataset):
             
     @property
     def tasks_mask(self):
-        #tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
-        #tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks_test[:1]
-        # TODO: change back to all tasks
-        #return tasks_mask[-8:]
-        tasks_mask=self.tasks_train
+        tasks_mask=self.tasks_train if (self.train or self.val) else self.tasks
+        #tasks_mask=self.tasks_train
         tasks_mask=torch.cat((tasks_mask, torchize([0])))
         return tasks_mask
 
@@ -173,33 +164,26 @@ class DB23(data.Dataset):
     def people_mask(self):
         #return self.people_train if (self.train or self.val) else self.people_test
         # test is in train (no subject generalization, YET)
-        #return torch.cat((self.people_train, self.people_test)) if (self.train or self.val) else self.people_test
-        # same subject classification
-        if self.pretrain:
-            #return self.people_train
+        return torch.cat((self.people_train, self.people_test)) if (self.train or self.val) else self.people_test
+        # within subject classification
+
+        #if self.pretrain:
+        #    return self.people_train
         #return self.people_test
-            return torchize(d2_idxs)
-        return torchize(d3_idxs+len(d2_idxs))
+            #return torchize(d2_idxs)
+        #return torchize(d3_idxs+len(d2_idxs))
             #return torchize(d2_idxs[:-1])
         #return torchize(d2_idxs[-1:]+len(d2_idxs))
 
     @property
     def rep_mask(self):
-        if self.pretrain:
-            # there is not test set for this one (just the same validation)
-            if self.train:
-                return torch.cat((self.rep_train, self.rep_test))
-            elif self.val:
-                return self.rep_val
-            else:
-                return self.rep_val
+        if self.train:
+            return self.rep_train
+            #return torch.cat(self.rep_train, self.rep_test)
+        elif self.val:
+            return self.rep_val
         else:
-            if self.train:
-                return self.rep_train
-            elif self.val:
-                return self.rep_val
-            else:
-                return self.rep_test
+            return self.rep_test
 
     @property
     def PEOPLE(self):
