@@ -285,6 +285,7 @@ class EMGNet(nn.Module):
         out=self.linear(out)
         out=self.last(out)
         shape=self.shape
+
         """
         vote=not self.training and VOTE
         if vote:
@@ -347,25 +348,27 @@ class GLOVENet(nn.Module):
                 #nn.Linear(GLOVE_DIM, 10),
                 #nn.Linear(10, GLOVE_DIM),
 
-                nn.Linear(GLOVE_DIM, 512//2),
-                nn.ReLU(),
-                self.bn1d_func(512//2),
+                #nn.Linear(GLOVE_DIM, 512//2, bias=False),
+                #self.bn1d_func(512//2),
+                #nn.ReLU(),
 
-                nn.Linear(512//2, 512//2),
-                nn.ReLU(),
-                self.bn1d_func(512//2),
-                nn.Dropout(self.dp),
-
-                nn.Linear(512//2, 512//2),
-                nn.ReLU(),
-                self.bn1d_func(512//2),
-                nn.Dropout(self.dp),
-
-                nn.Linear(512//2, 512//2),
-                nn.ReLU(), 
-                self.bn1d_func(512//2),
-                nn.Dropout(self.dp),
                 )
+        """
+        nn.Linear(512//2, 512//2),
+        nn.ReLU(),
+        self.bn1d_func(512//2),
+        nn.Dropout(self.dp),
+
+        nn.Linear(512//2, 512//2),
+        nn.ReLU(),
+        self.bn1d_func(512//2),
+        nn.Dropout(self.dp),
+
+        nn.Linear(512//2, 512//2),
+        nn.ReLU(), 
+        self.bn1d_func(512//2),
+        nn.Dropout(self.dp),
+        """
 
         self.bits=MAX_TASKS_TRAIN if self.prediction else self.d_e
         self.easy = nn.Sequential(
@@ -391,7 +394,6 @@ class GLOVENet(nn.Module):
     def forward(self, GLOVE, labels):
 
         """
-        out=GLOVE.reshape(-1, 1, 1, GLOVE_DIM)
         out=self.conv_glove(out)
         out=self.linear(out)
         out=self.last(out)
@@ -404,6 +406,7 @@ class GLOVENet(nn.Module):
             #    out=out.reshape((shape[0], 1, shape[1], shape[2])).expand(-1, PREDICTION_WINDOW_SIZE, -1, -1).reshape(-1, shape[1], self.bits)
         """
         shape=GLOVE.shape
+        out=GLOVE.reshape(-1, 1, 1, GLOVE_DIM)
 
         if self.prediction:
             out=GLOVE.reshape(-1, 1, 1, GLOVE_DIM)
@@ -414,6 +417,9 @@ class GLOVENet(nn.Module):
 
         hot=torch.nn.functional.one_hot(labels)
         out=self.easy(hot.to(torch.float32))
+
+        #out=self.last(self.linear(self.conv_glove(out)))
+        #out=self.last(self.linear(out))
         out=out.reshape((shape[0], -1, self.bits))
         if not self.training and VOTE:
             out=out.reshape((shape[0], 1, shape[1], self.bits)).expand(-1, PREDICTION_WINDOW_SIZE, -1, -1).reshape(-1, shape[1], self.bits)

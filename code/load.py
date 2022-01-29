@@ -164,14 +164,14 @@ class DB23(data.Dataset):
     def people_mask(self):
         #return self.people_train if (self.train or self.val) else self.people_test
         # test is in train (no subject generalization, YET)
-        return torch.cat((self.people_train, self.people_test)) if (self.train or self.val) else self.people_test
+        #return torch.cat((self.people_train, self.people_test)) if (self.train or self.val) else self.people_test
         # within subject classification
-        #return [12]
+        #return []
 
         #if self.pretrain:
         #    return self.people_train
         #return self.people_test
-            #return torchize(d2_idxs)
+        return torchize(d2_idxs)
         #return torchize(d3_idxs+len(d2_idxs))
             #return torchize(d2_idxs[:-1])
         #return torchize(d2_idxs[-1:]+len(d2_idxs))

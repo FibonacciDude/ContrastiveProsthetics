@@ -35,7 +35,7 @@ def test(model, dataset):
         label=label.reshape(-1)
         with torch.no_grad():
             #with amp.autocast():
-            logits=model.forward(EMG, GLOVE)
+            logits=model.forward(EMG, GLOVE, label)
             loss=model.loss(logits, label)
             total_loss.append(loss.item())
 
@@ -69,8 +69,8 @@ def train_loop(dataset, params, checkpoint=False, checkpoint_dir="../checkpoints
         print("Loading model")
         model.load_state_dict(torch.load(load+".pt"))
 
-    optimizer_emg = optim.Adam(model.emg_net.parameters(), lr=params['lr_emg'], weight_decay=0) # batchnorm wrong with AdamW
-    optimizer_glove = optim.Adam(model.glove_net.parameters(), lr=params['lr_glove'], weight_decay=0) # batchnorm wrong with AdamW
+    optimizer_emg = optim.Adam(model.emg_net.parameters(), lr=params['lr_emg'], weight_decay=0)
+    optimizer_glove = optim.Adam(model.glove_net.parameters(), lr=params['lr_glove'], weight_decay=0)
 
     #if annealing:
     #    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=0,verbose=False)
