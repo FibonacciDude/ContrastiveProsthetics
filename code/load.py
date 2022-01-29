@@ -42,7 +42,7 @@ class DB23(data.Dataset):
         self.rep_train=train_reps[:-1]-1
         self.rep_val=train_reps[-1:]-1
         self.rep_test=test_reps-1
-        self.reps=reps
+        self.reps=reps-1
 
         # own little dataset
         self.glover=Glover()
@@ -168,17 +168,16 @@ class DB23(data.Dataset):
     def people_mask(self):
         return self.people_train if (self.train or self.val) else self.people_test
         # same subject classification
-        #return torchize([41])
+        #return torchize([41,0,1])
 
     @property
     def rep_mask(self):
         if self.train:
             return self.rep_train
         elif self.val:
-            return self.rep_val
-            #return self.rep_train
+            return torch.cat((self.rep_test, self.rep_val))
         else:
-            return self.rep_test
+            return self.reps
 
     @property
     def PEOPLE(self):
