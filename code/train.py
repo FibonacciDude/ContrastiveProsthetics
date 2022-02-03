@@ -197,6 +197,7 @@ def main(args):
     best_key = keys[best_val]
     print("Best combination: %s" % str(best_key))
     # test model
+    #best_key=[1.60000000e+01, 3.90544128e-04, 6.95553059e-03, 1e-6, 4.07045600e-02, 3.84288409e-06, 2.28772141e-02]
     d_e, lr_e, reg_e, dp_e, lr_g, reg_g, dp_g = best_key     # best model during validation
     params = {
             'd_e' : int(d_e),

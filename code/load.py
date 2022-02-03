@@ -193,6 +193,7 @@ class DB23(data.Dataset):
             if self.db2:
                 return torch.cat((self.rep_train, self.rep_test))
             return self.rep_train
+            #return torch.cat((self.rep_train, self.rep_val))
         elif self.val:
             return self.rep_val
         else:
