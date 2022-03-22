@@ -1,5 +1,4 @@
 # ContrastiveProsthetics
--Computationally-free personalization at test time for sEMG classification.
 
 Prosthetic hands usually use classification of sEMG (muscle electric) signals for differentiating different hand gestures in amputees' arms and allow
 for its control. A machine learning model is used.
