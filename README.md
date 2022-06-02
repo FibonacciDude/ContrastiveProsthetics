@@ -19,4 +19,4 @@ The average accuracy per prediction set size on 144 trials (all the possibilitie
 In further research, the encoding won't be one-hot but glove angle signals (to specify arbitrary hand gestures), to allow for zero-shot generalization procedures. This is done in the name of lightweight adaptivity without backpropagation.
 
 For more information about the exigence behind the type of adaptiveness used:
-https://fibonaccidude.github.io/omleda/ideas/2022/03/21/choosing-your-compromises-at-test-time.html
+visit https://fibonaccidude.github.io/personal-site/blog
