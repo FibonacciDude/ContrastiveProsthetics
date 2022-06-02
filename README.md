@@ -21,16 +21,18 @@ In further research, the encoding won't be one-hot but glove angle signals (to s
 To run experiments:
 ```
 ./download_data.sh
-./go.sh
-./results.sh
+./code/go.sh
+./code/results.sh
 ```
 or (with customization)
 
 ```
 ./download_data.sh
-CUDA_LAUNCH_BLOCKING=1 python train.py --final_epochs=8 --crossval_size=150 --batch_size=8 --crossval_load  --test --no_adabn
-./results.sh
+CUDA_LAUNCH_BLOCKING=1 python code/train.py --final_epochs=8 --crossval_size=150 --batch_size=8 --crossval_load  --test --no_adabn
+./code/results.sh
 ```
 
 For more information about the exigence behind the type of adaptiveness used:
 visit https://fibonaccidude.github.io/personal-site/blog
+
+-Science Fair Project 2021-2022
