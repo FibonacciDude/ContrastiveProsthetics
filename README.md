@@ -32,7 +32,9 @@ CUDA_LAUNCH_BLOCKING=1 python code/train.py --final_epochs=8 --crossval_size=150
 ./code/results.sh
 ```
 
-For more information about the exigence behind the type of adaptiveness used:
+For more information about the exigence behind this:
+"Making Compromises at Test Time"
+
 visit https://fibonaccidude.github.io/personal-site/blog
 
--Science Fair Project 2021-2022
+---Science Fair Project 2021-2022---
