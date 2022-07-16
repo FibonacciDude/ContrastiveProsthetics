@@ -32,9 +32,6 @@ CUDA_LAUNCH_BLOCKING=1 python code/train.py --final_epochs=8 --crossval_size=150
 ./code/results.sh
 ```
 
-For more information about the exigence behind this:
-"Making Compromises at Test Time"
+# Dataset (painful, but most useful)
 
-visit https://fibonaccidude.github.io/personal-site/blog
-
----Science Fair Project 2021-2022---
+In order to do this, I developed a cute API to the emg data called DB23 (as was useful to my task) where you could index to torch and batch. The step before that was to download and sort the data in a fast format (which happened to be .pt files) which can be done with ./download_data.sh. Overall you can tweak the interface to add all sorts of transformations (within different groups or between them), indexing preferences (which can be a bit more work), group batching (by different characteristics), etc. The only current assumption I have is that the data can all fit in GPU ram (which mine is 12 gb). However, this can easily be solved through moving it to cpu and then pre-loading it to GPU (for which I think there is an interface to already in the API).
